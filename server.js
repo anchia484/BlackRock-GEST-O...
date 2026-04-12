@@ -5,21 +5,20 @@ const cors = require('cors');
 
 const app = express();
 
-// Configurações básicas
-app.use(cors()); // Permite que o frontend converse com o backend
-app.use(express.json()); // Permite que o servidor entenda dados no formato JSON
+app.use(cors());
+app.use(express.json());
 
-// Rota de teste
+// Importando as rotas de autenticação (NOVO)
+const authRoutes = require('./auth');
+app.use('/api/auth', authRoutes);
+
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
 });
 
-// Conexão com o Banco de Dados (MongoDB)
 mongoose.connect(process.env.MONGO_URI)
 .then(() => {
     console.log('✅ Banco de dados MongoDB conectado com sucesso!');
-    
-    // Só liga o servidor se o banco conectar
     app.listen(process.env.PORT, () => {
         console.log(`🚀 Servidor BlackRock rodando na porta ${process.env.PORT}`);
     });
