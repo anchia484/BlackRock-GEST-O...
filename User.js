@@ -10,7 +10,10 @@ const userSchema = new mongoose.Schema({
     saldo: { type: Number, default: 0.00 },
     isAgente: { type: Boolean, default: false },
     planoAtivo: { type: String, default: 'Nenhum' },
-    dataExpiracaoPlano: { type: Date, default: null } // NOVO: Para o controle de dias
+    dataExpiracaoPlano: { type: Date, default: null },
+    // NOVO: Controle de tarefas diárias
+    tarefasFeitasHoje: { type: Number, default: 0 },
+    dataUltimaTarefa: { type: Date, default: null } 
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);
