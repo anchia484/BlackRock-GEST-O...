@@ -8,9 +8,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Importando as rotas de autenticação (NOVO)
+// Importando as rotas
 const authRoutes = require('./auth');
+const walletRoutes = require('./wallet'); // NOVO: Importando a carteira
+
+// Configurando as URLs da API
 app.use('/api/auth', authRoutes);
+app.use('/api/wallet', walletRoutes); // NOVO: Ligando a carteira no servidor
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
