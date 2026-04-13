@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
-const Transaction = require('./Transaction'); // Importando o banco de transações
+const Transaction = require('./Transaction');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -48,7 +48,7 @@ router.post('/login', async (req, res) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// 3. INJETAR SALDO
+// 3. INJETAR SALDO MANUAL
 router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
     try {
         const { telefoneUsuario, valor } = req.body;
@@ -62,48 +62,46 @@ router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 4. VER FILA DE DEPÓSITOS E SAQUES PENDENTES
+// 4. VER FILA DE TRANSAÇÕES PENDENTES
 // ==========================================
 router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
     try {
-        // Busca todas as transações que estão pendentes e traz os dados do usuário junto
-        const pendentes = await Transaction.find({ status: 'pendente' }).populate('usuarioId', 'nome telefone idUnico');
+        const pendentes = await Transaction.find({ status: 'pendente' }).sort({ createdAt: -1 });
         res.json(pendentes);
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
 // ==========================================
-// 5. APROVAR OU REJEITAR TRANSAÇÃO
+// 5. APROVAR, REJEITAR OU MARCAR COMO FRAUDE
 // ==========================================
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
-        const { transacaoId, acao } = req.body; // Ação deve ser 'aprovado' ou 'rejeitado'
+        const { transacaoId, acao } = req.body; // 'aprovado', 'rejeitado' ou 'fraude'
         
         const transacao = await Transaction.findById(transacaoId);
         if (!transacao || transacao.status !== 'pendente') {
-            return res.status(400).json({ erro: 'Transação não encontrada ou já foi processada.' });
+            return res.status(400).json({ erro: 'Transação não encontrada ou já processada.' });
         }
 
         const usuario = await User.findById(transacao.usuarioId);
 
         if (acao === 'aprovado') {
             transacao.status = 'aprovado';
-            if (transacao.tipo === 'deposito') {
-                usuario.saldo += transacao.valor; // Libera o dinheiro na conta do usuário
-            }
-            // Se for saque, não mexe no saldo, pois o dinheiro já foi retirado na hora do pedido
-            
+            if (transacao.tipo === 'deposito') usuario.saldo += transacao.valor;
         } else if (acao === 'rejeitado') {
             transacao.status = 'rejeitado';
-            if (transacao.tipo === 'saque') {
-                usuario.saldo += transacao.valor; // Devolve o dinheiro pra conta se o Admin rejeitar o saque
-            }
+            if (transacao.tipo === 'saque') usuario.saldo += transacao.valor; // Devolve o dinheiro do saque rejeitado
+        } else if (acao === 'fraude') {
+            transacao.status = 'fraude';
+            // Em caso de fraude, a transação fica marcada no banco e o saldo não mexe
+        } else {
+            return res.status(400).json({ erro: 'Ação inválida.' });
         }
 
         await transacao.save();
         await usuario.save();
 
-        res.json({ mensagem: `✅ A transação de ${transacao.tipo} foi marcada como: ${acao.toUpperCase()}!` });
+        res.json({ mensagem: `✅ Transação de ${transacao.tipo} de ${transacao.nomeUsuario} marcada como: ${acao.toUpperCase()}` });
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
