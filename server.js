@@ -13,14 +13,16 @@ const authRoutes = require('./auth');
 const walletRoutes = require('./wallet');
 const planRoutes = require('./planRoutes');
 const taskRoutes = require('./taskRoutes');
-const networkRoutes = require('./networkRoutes'); // NOVO
+const networkRoutes = require('./networkRoutes');
+const adminRoutes = require('./adminRoutes'); // NOVO: Rota do Admin
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/planos', planRoutes);
 app.use('/api/tarefas', taskRoutes);
-app.use('/api/rede', networkRoutes); // NOVO
+app.use('/api/rede', networkRoutes);
+app.use('/api/admin', adminRoutes); // NOVO: Ligando o Admin
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');

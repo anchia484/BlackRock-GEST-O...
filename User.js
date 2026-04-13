@@ -12,8 +12,8 @@ const userSchema = new mongoose.Schema({
     planoAtivo: { type: String, default: 'Nenhum' },
     dataExpiracaoPlano: { type: Date, default: null },
     tarefasFeitasHoje: { type: Number, default: 0 },
-    dataUltimaTarefa: { type: Date, default: null } 
+    dataUltimaTarefa: { type: Date, default: null },
+    isAdmin: { type: Boolean, default: false } // NOVO: Etiqueta de Administrador
 }, { timestamps: true });
 
-// A MÁGICA ESTÁ AQUI: Forçamos o nome da coleção para 'usuarios_blackrock'
 module.exports = mongoose.model('User', userSchema, 'usuarios_blackrock');
