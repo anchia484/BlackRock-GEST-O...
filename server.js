@@ -12,13 +12,15 @@ app.use(express.json());
 const authRoutes = require('./auth');
 const walletRoutes = require('./wallet');
 const planRoutes = require('./planRoutes');
-const taskRoutes = require('./taskRoutes'); // NOVO: Importando as tarefas
+const taskRoutes = require('./taskRoutes');
+const networkRoutes = require('./networkRoutes'); // NOVO
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
 app.use('/api/wallet', walletRoutes);
 app.use('/api/planos', planRoutes);
-app.use('/api/tarefas', taskRoutes); // NOVO: Ligando as tarefas no servidor
+app.use('/api/tarefas', taskRoutes);
+app.use('/api/rede', networkRoutes); // NOVO
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
