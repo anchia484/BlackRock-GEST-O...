@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
 const Transaction = require('./Transaction');
+const Feed = require('./Feed'); // NOVO: Importando o Feed
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -61,9 +62,7 @@ router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// ==========================================
-// 4. VER FILA DE TRANSAÇÕES PENDENTES
-// ==========================================
+// 4. VER FILA DE TRANSAÇÕES
 router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
     try {
         const pendentes = await Transaction.find({ status: 'pendente' }).sort({ createdAt: -1 });
@@ -71,17 +70,12 @@ router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// ==========================================
-// 5. APROVAR, REJEITAR OU MARCAR COMO FRAUDE
-// ==========================================
+// 5. PROCESSAR TRANSAÇÕES
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
-        const { transacaoId, acao } = req.body; // 'aprovado', 'rejeitado' ou 'fraude'
-        
+        const { transacaoId, acao } = req.body; 
         const transacao = await Transaction.findById(transacaoId);
-        if (!transacao || transacao.status !== 'pendente') {
-            return res.status(400).json({ erro: 'Transação não encontrada ou já processada.' });
-        }
+        if (!transacao || transacao.status !== 'pendente') return res.status(400).json({ erro: 'Transação inválida.' });
 
         const usuario = await User.findById(transacao.usuarioId);
 
@@ -90,18 +84,34 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             if (transacao.tipo === 'deposito') usuario.saldo += transacao.valor;
         } else if (acao === 'rejeitado') {
             transacao.status = 'rejeitado';
-            if (transacao.tipo === 'saque') usuario.saldo += transacao.valor; // Devolve o dinheiro do saque rejeitado
+            if (transacao.tipo === 'saque') usuario.saldo += transacao.valor; 
         } else if (acao === 'fraude') {
             transacao.status = 'fraude';
-            // Em caso de fraude, a transação fica marcada no banco e o saldo não mexe
         } else {
             return res.status(400).json({ erro: 'Ação inválida.' });
         }
 
         await transacao.save();
         await usuario.save();
+        res.json({ mensagem: `✅ Transação de ${transacao.tipo} marcada como: ${acao.toUpperCase()}` });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+});
 
-        res.json({ mensagem: `✅ Transação de ${transacao.tipo} de ${transacao.nomeUsuario} marcada como: ${acao.toUpperCase()}` });
+// ==========================================
+// 6. CRIAR NOVA NOTÍCIA NO FEED
+// ==========================================
+router.post('/criar-post', auth, adminAuth, async (req, res) => {
+    try {
+        const { titulo, mensagem, imagemBase64, tipo } = req.body;
+        
+        if (!titulo || !mensagem) {
+            return res.status(400).json({ erro: 'O título e a mensagem são obrigatórios.' });
+        }
+
+        const novoPost = new Feed({ titulo, mensagem, imagemBase64, tipo });
+        await novoPost.save();
+
+        res.json({ mensagem: '📢 Sucesso! Nova postagem enviada para o Feed de todos os usuários.' });
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
