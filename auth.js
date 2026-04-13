@@ -1,9 +1,10 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken'); // NOVO: Biblioteca para gerar a chave de acesso (Token)
+const jwt = require('jsonwebtoken'); 
 const User = require('./User');
 const router = express.Router();
 
+// Funções para gerar os códigos automáticos
 const gerarIdUnico = () => Math.floor(10000 + Math.random() * 90000);
 
 const gerarCodigoConvite = () => {
@@ -28,6 +29,7 @@ router.post('/registro', async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash(senha, salt);
 
+        // Gerando os códigos que deram erro na sua imagem
         let idUnico = gerarIdUnico();
         let meuCodigoConvite = gerarCodigoConvite();
 
@@ -61,31 +63,27 @@ router.post('/registro', async (req, res) => {
     }
 });
 
-// ------------------- ROTA DE LOGIN (NOVA) -------------------
+// ------------------- ROTA DE LOGIN -------------------
 router.post('/login', async (req, res) => {
     try {
         const { telefone, senha } = req.body;
 
-        // 1. Verifica se o usuário existe no banco
         const usuario = await User.findOne({ telefone });
         if (!usuario) {
             return res.status(400).json({ erro: 'Número de telefone não encontrado.' });
         }
 
-        // 2. Compara a senha digitada com a senha criptografada do banco
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) {
             return res.status(400).json({ erro: 'Senha incorreta.' });
         }
 
-        // 3. Gera o Token de acesso seguro (dura 24 horas)
         const token = jwt.sign(
             { id: usuario._id, isAgente: usuario.isAgente, idUnico: usuario.idUnico }, 
             process.env.JWT_SECRET, 
             { expiresIn: '24h' }
         );
 
-        // 4. Retorna o sucesso e o token
         res.json({
             mensagem: 'Login efetuado com sucesso!',
             token: token,
