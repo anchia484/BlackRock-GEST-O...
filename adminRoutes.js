@@ -2,109 +2,109 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
+const Transaction = require('./Transaction'); // Importando o banco de transações
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// ==========================================
-// CADEADO DE SEGURANÇA (Só Admin passa)
-// ==========================================
 const adminAuth = async (req, res, next) => {
     try {
         const usuario = await User.findById(req.usuario.id);
-        if (!usuario || !usuario.isAdmin) {
-            return res.status(403).json({ erro: 'ACESSO NEGADO: Você não tem permissão de Administrador.' });
-        }
+        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'ACESSO NEGADO' });
         next();
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro de segurança.' });
-    }
+    } catch (erro) { res.status(500).json({ erro: 'Erro de segurança.' }); }
 };
 
-// ==========================================
-// 1. GERAR A SUA CONTA ADMIN (Rodar apenas 1 vez)
-// ==========================================
+// 1. GERAR ADMIN
 router.post('/setup-admin', async (req, res) => {
     try {
         const adminExiste = await User.findOne({ isAdmin: true });
-        if (adminExiste) {
-            return res.status(400).json({ erro: 'O Administrador principal já foi criado.' });
-        }
+        if (adminExiste) return res.status(400).json({ erro: 'O Administrador principal já foi criado.' });
 
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash('SenhaAdmin123!', salt);
 
         const admin = new User({
-            nome: 'Diretor BlackRock',
-            telefone: 'ADMIN', // Login será com a palavra ADMIN
-            senha: senhaCriptografada,
-            idUnico: 00000,
-            meuCodigoConvite: 'ADMIN0',
-            isAdmin: true,
-            isAgente: true
+            nome: 'Diretor BlackRock', telefone: 'ADMIN', senha: senhaCriptografada,
+            idUnico: 00000, meuCodigoConvite: 'ADMIN0', isAdmin: true, isAgente: true
         });
 
         await admin.save();
-        res.json({ mensagem: '✅ Conta de Administrador criada com sucesso! (Login: ADMIN / Senha: SenhaAdmin123!)' });
-
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
-    }
+        res.json({ mensagem: '✅ Conta de Administrador criada com sucesso!' });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// ==========================================
-// 2. LOGIN EXCLUSIVO DO ADMIN (A porta dos fundos)
-// ==========================================
+// 2. LOGIN ADMIN
 router.post('/login', async (req, res) => {
     try {
         const { telefone, senha } = req.body;
-
         const usuario = await User.findOne({ telefone });
-        if (!usuario) return res.status(400).json({ erro: 'Credenciais inválidas.' });
-
-        // VERIFICAÇÃO DE SEPARAÇÃO: Se for usuário comum tentando entrar no link de admin, ele é bloqueado aqui!
-        if (!usuario.isAdmin) {
-            return res.status(403).json({ erro: 'ACESSO NEGADO: Esta tela de login é apenas para administradores.' });
-        }
+        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'ACESSO NEGADO' });
 
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'Credenciais inválidas.' });
 
-        const token = jwt.sign(
-            { id: usuario._id, isAdmin: true }, 
-            process.env.JWT_SECRET, 
-            { expiresIn: '12h' }
-        );
-
-        res.json({
-            mensagem: 'Bem-vindo ao Painel de Controle BlackRock!',
-            token: token,
-            adminLogado: usuario.nome
-        });
-
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
-    }
+        const token = jwt.sign({ id: usuario._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
+        res.json({ mensagem: 'Bem-vindo ao Painel Admin!', token, adminLogado: usuario.nome });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// ==========================================
-// 3. ADICIONAR SALDO (Função restrita)
-// ==========================================
+// 3. INJETAR SALDO
 router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
     try {
         const { telefoneUsuario, valor } = req.body;
-        
-        if (valor <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
-
         const cliente = await User.findOne({ telefone: telefoneUsuario });
         if (!cliente) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
         cliente.saldo += valor;
         await cliente.save();
+        res.json({ mensagem: `✅ Injetado ${valor} MZN em ${cliente.nome}.`, novoSaldo: cliente.saldo });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+});
 
-        res.json({ mensagem: `✅ Sucesso! Injetado ${valor} MZN na conta de ${cliente.nome}.`, novoSaldo: cliente.saldo });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
-    }
+// ==========================================
+// 4. VER FILA DE DEPÓSITOS E SAQUES PENDENTES
+// ==========================================
+router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
+    try {
+        // Busca todas as transações que estão pendentes e traz os dados do usuário junto
+        const pendentes = await Transaction.find({ status: 'pendente' }).populate('usuarioId', 'nome telefone idUnico');
+        res.json(pendentes);
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+});
+
+// ==========================================
+// 5. APROVAR OU REJEITAR TRANSAÇÃO
+// ==========================================
+router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
+    try {
+        const { transacaoId, acao } = req.body; // Ação deve ser 'aprovado' ou 'rejeitado'
+        
+        const transacao = await Transaction.findById(transacaoId);
+        if (!transacao || transacao.status !== 'pendente') {
+            return res.status(400).json({ erro: 'Transação não encontrada ou já foi processada.' });
+        }
+
+        const usuario = await User.findById(transacao.usuarioId);
+
+        if (acao === 'aprovado') {
+            transacao.status = 'aprovado';
+            if (transacao.tipo === 'deposito') {
+                usuario.saldo += transacao.valor; // Libera o dinheiro na conta do usuário
+            }
+            // Se for saque, não mexe no saldo, pois o dinheiro já foi retirado na hora do pedido
+            
+        } else if (acao === 'rejeitado') {
+            transacao.status = 'rejeitado';
+            if (transacao.tipo === 'saque') {
+                usuario.saldo += transacao.valor; // Devolve o dinheiro pra conta se o Admin rejeitar o saque
+            }
+        }
+
+        await transacao.save();
+        await usuario.save();
+
+        res.json({ mensagem: `✅ A transação de ${transacao.tipo} foi marcada como: ${acao.toUpperCase()}!` });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
 module.exports = router;

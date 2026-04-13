@@ -1,47 +1,60 @@
 const express = require('express');
 const Transaction = require('./Transaction');
+const User = require('./User');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// 1. Rota para solicitar um depósito manual
+// 1. Usuário solicita Depósito
 router.post('/deposito', auth, async (req, res) => {
     try {
         const { valor, metodo, numeroTelefone } = req.body;
+        if (valor < 100) return res.status(400).json({ erro: 'O depósito mínimo é de 100 MZN.' });
 
-        if (valor <= 0) {
-            return res.status(400).json({ erro: 'O valor do depósito deve ser maior que zero.' });
-        }
-
-        // Cria a transação como pendente
         const novaTransacao = new Transaction({
             usuarioId: req.usuario.id,
             tipo: 'deposito',
             valor,
-            metodo, // Vai receber "M-Pesa" ou "e-Mola" do frontend depois
+            metodo,
             numeroTelefone,
             status: 'pendente'
         });
 
         await novaTransacao.save();
-
-        res.status(201).json({ 
-            mensagem: 'Pedido de depósito enviado com sucesso! Aguarde a aprovação do administrador.',
-            transacao: novaTransacao 
-        });
-
+        res.json({ mensagem: 'Pedido de depósito enviado com sucesso! Aguarde a aprovação da Diretoria.' });
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
+        res.status(500).json({ erro: 'Erro no servidor.' });
     }
 });
 
-// 2. Rota para ver o histórico simples
-router.get('/historico', auth, async (req, res) => {
+// 2. Usuário solicita Saque (Levantamento)
+router.post('/saque', auth, async (req, res) => {
     try {
-        // Busca todas as transações deste usuário logado, da mais nova para a mais velha
-        const historico = await Transaction.find({ usuarioId: req.usuario.id }).sort({ createdAt: -1 });
-        res.json(historico);
+        const { valor, metodo, numeroTelefone } = req.body;
+        const usuario = await User.findById(req.usuario.id);
+
+        if (valor < 200) return res.status(400).json({ erro: 'O saque mínimo é de 200 MZN.' });
+        if (usuario.saldo < valor) return res.status(400).json({ erro: 'Saldo insuficiente. Você não tem esse valor disponível.' });
+
+        // Retira o saldo imediatamente (o dinheiro fica congelado aguardando o Admin)
+        usuario.saldo -= valor;
+        await usuario.save();
+
+        const novaTransacao = new Transaction({
+            usuarioId: req.usuario.id,
+            tipo: 'saque',
+            valor,
+            metodo,
+            numeroTelefone,
+            status: 'pendente'
+        });
+
+        await novaTransacao.save();
+        res.json({ 
+            mensagem: `Pedido de saque de ${valor} MZN enviado! O valor foi retido da sua conta e aguarda aprovação.`, 
+            saldoRestante: usuario.saldo 
+        });
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
+        res.status(500).json({ erro: 'Erro no servidor.' });
     }
 });
 
