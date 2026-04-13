@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
 const Transaction = require('./Transaction');
-const Feed = require('./Feed'); // NOVO: Importando o Feed
+const Feed = require('./Feed'); // Importando o banco do Feed
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -70,7 +70,7 @@ router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// 5. PROCESSAR TRANSAÇÕES
+// 5. PROCESSAR TRANSAÇÕES E GERAR POST AUTOMÁTICO DE SAQUE
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
         const { transacaoId, acao } = req.body; 
@@ -81,7 +81,19 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
 
         if (acao === 'aprovado') {
             transacao.status = 'aprovado';
-            if (transacao.tipo === 'deposito') usuario.saldo += transacao.valor;
+            if (transacao.tipo === 'deposito') {
+                usuario.saldo += transacao.valor;
+            } else if (transacao.tipo === 'saque') {
+                // AQUI ESTÁ A MÁGICA: Post automático de Prova de Pagamento
+                const postPagamento = new Feed({
+                    titulo: 'Pagamento Realizado! ✅',
+                    mensagem: `O usuário ${usuario.nome.split(' ')[0]} recebeu ${transacao.valor} MZN via ${transacao.operadora}.`,
+                    tipo: 'prova_pagamento',
+                    autor: 'Financeiro BlackRock',
+                    dadosExtras: { idUsuario: usuario.idUnico, valor: transacao.valor }
+                });
+                await postPagamento.save();
+            }
         } else if (acao === 'rejeitado') {
             transacao.status = 'rejeitado';
             if (transacao.tipo === 'saque') usuario.saldo += transacao.valor; 
@@ -98,20 +110,33 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 6. CRIAR NOVA NOTÍCIA NO FEED
+// 6. CRIAR POST PROFISSIONAL NO FEED
 // ==========================================
 router.post('/criar-post', auth, adminAuth, async (req, res) => {
     try {
-        const { titulo, mensagem, imagemBase64, tipo } = req.body;
+        const { titulo, mensagem, midiaBase64, formatoMidia, tipo, isFixado } = req.body;
         
-        if (!titulo || !mensagem) {
-            return res.status(400).json({ erro: 'O título e a mensagem são obrigatórios.' });
-        }
-
-        const novoPost = new Feed({ titulo, mensagem, imagemBase64, tipo });
+        const novoPost = new Feed({ 
+            titulo, mensagem, midiaBase64, formatoMidia, tipo, isFixado 
+        });
         await novoPost.save();
 
-        res.json({ mensagem: '📢 Sucesso! Nova postagem enviada para o Feed de todos os usuários.' });
+        res.json({ mensagem: '📢 Postagem publicada com sucesso no Feed!' });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+});
+
+// ==========================================
+// 7. FIXAR OU DESFIXAR POST
+// ==========================================
+router.patch('/fixar-post/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const post = await Feed.findById(req.params.id);
+        if (!post) return res.status(404).json({ erro: 'Post não encontrado.' });
+        
+        post.isFixado = !post.isFixado; // Inverte o estado (se for true vira false, se for false vira true)
+        await post.save();
+        
+        res.json({ mensagem: post.isFixado ? 'Post fixado no topo! 📌' : 'Post desfixado.' });
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
