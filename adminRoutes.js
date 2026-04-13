@@ -3,7 +3,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
 const Transaction = require('./Transaction');
-const Feed = require('./Feed'); // Importando o banco do Feed
+const Feed = require('./Feed');
+const Plan = require('./Plan');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -15,129 +16,115 @@ const adminAuth = async (req, res, next) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro de segurança.' }); }
 };
 
-// 1. GERAR ADMIN
+// 1. DASHBOARD (Estatísticas Reais)
+router.get('/dashboard', auth, adminAuth, async (req, res) => {
+    try {
+        const totalUsuarios = await User.countDocuments({ isAdmin: false });
+        const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
+        const transacoes = await Transaction.find({ status: 'aprovado' });
+        
+        const totalDepositado = transacoes.filter(t => t.tipo === 'deposito').reduce((acc, curr) => acc + curr.valor, 0);
+        const totalSacado = transacoes.filter(t => t.tipo === 'saque').reduce((acc, curr) => acc + curr.valor, 0);
+
+        res.json({
+            totalUsuarios,
+            usuariosAtivos,
+            caixaLiquido: totalDepositado - totalSacado,
+            totalDepositado,
+            totalSacado
+        });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard' }); }
+});
+
+// 2. CONFIGURAR PLANOS (Criar ou Editar)
+router.post('/configurar-plano', auth, adminAuth, async (req, res) => {
+    try {
+        const { nome, preco, ganhoDiario, limiteTarefasDia, validadeDias } = req.body;
+        const plano = await Plan.findOneAndUpdate(
+            { nome }, 
+            { preco, ganhoDiario, limiteTarefasDia, validadeDias },
+            { upsert: true, new: true }
+        );
+        res.json({ mensagem: `Plano ${nome} atualizado!`, plano });
+    } catch (erro) { res.status(500).json({ erro: 'Erro ao configurar plano.' }); }
+});
+
+// 3. SETUP ADMIN INICIAL
 router.post('/setup-admin', async (req, res) => {
     try {
         const adminExiste = await User.findOne({ isAdmin: true });
-        if (adminExiste) return res.status(400).json({ erro: 'O Administrador principal já foi criado.' });
-
+        if (adminExiste) return res.status(400).json({ erro: 'Admin já existe.' });
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash('SenhaAdmin123!', salt);
-
         const admin = new User({
             nome: 'Diretor BlackRock', telefone: 'ADMIN', senha: senhaCriptografada,
-            idUnico: 00000, meuCodigoConvite: 'ADMIN0', isAdmin: true, isAgente: true
+            idUnico: 0, meuCodigoConvite: 'ADMIN0', isAdmin: true
         });
-
         await admin.save();
-        res.json({ mensagem: '✅ Conta de Administrador criada com sucesso!' });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+        res.json({ mensagem: 'Admin criado!' });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no setup' }); }
 });
 
-// 2. LOGIN ADMIN
+// 4. LOGIN ADMIN
 router.post('/login', async (req, res) => {
     try {
         const { telefone, senha } = req.body;
         const usuario = await User.findOne({ telefone });
-        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'ACESSO NEGADO' });
-
+        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'Acesso negado.' });
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
-        if (!senhaValida) return res.status(400).json({ erro: 'Credenciais inválidas.' });
-
+        if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
         const token = jwt.sign({ id: usuario._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-        res.json({ mensagem: 'Bem-vindo ao Painel Admin!', token, adminLogado: usuario.nome });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+        res.json({ token, adminLogado: usuario.nome });
+    } catch (erro) { res.status(500).json({ erro: 'Erro no login' }); }
 });
 
-// 3. INJETAR SALDO MANUAL
-router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
-    try {
-        const { telefoneUsuario, valor } = req.body;
-        const cliente = await User.findOne({ telefone: telefoneUsuario });
-        if (!cliente) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-
-        cliente.saldo += valor;
-        await cliente.save();
-        res.json({ mensagem: `✅ Injetado ${valor} MZN em ${cliente.nome}.`, novoSaldo: cliente.saldo });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
-});
-
-// 4. VER FILA DE TRANSAÇÕES
-router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
-    try {
-        const pendentes = await Transaction.find({ status: 'pendente' }).sort({ createdAt: -1 });
-        res.json(pendentes);
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
-});
-
-// 5. PROCESSAR TRANSAÇÕES E GERAR POST AUTOMÁTICO DE SAQUE
+// 5. PROCESSAR TRANSAÇÕES + POST AUTOMÁTICO
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
         const { transacaoId, acao } = req.body; 
         const transacao = await Transaction.findById(transacaoId);
-        if (!transacao || transacao.status !== 'pendente') return res.status(400).json({ erro: 'Transação inválida.' });
-
         const usuario = await User.findById(transacao.usuarioId);
 
         if (acao === 'aprovado') {
             transacao.status = 'aprovado';
-            if (transacao.tipo === 'deposito') {
-                usuario.saldo += transacao.valor;
-            } else if (transacao.tipo === 'saque') {
-                // AQUI ESTÁ A MÁGICA: Post automático de Prova de Pagamento
-                const postPagamento = new Feed({
+            if (transacao.tipo === 'deposito') usuario.saldo += transacao.valor;
+            if (transacao.tipo === 'saque') {
+                const post = new Feed({
                     titulo: 'Pagamento Realizado! ✅',
-                    mensagem: `O usuário ${usuario.nome.split(' ')[0]} recebeu ${transacao.valor} MZN via ${transacao.operadora}.`,
-                    tipo: 'prova_pagamento',
-                    autor: 'Financeiro BlackRock',
-                    dadosExtras: { idUsuario: usuario.idUnico, valor: transacao.valor }
+                    mensagem: `O usuário ${usuario.nome.split(' ')[0]} recebeu ${transacao.valor} MZN.`,
+                    tipo: 'prova_pagamento'
                 });
-                await postPagamento.save();
+                await post.save();
             }
-        } else if (acao === 'rejeitado') {
-            transacao.status = 'rejeitado';
-            if (transacao.tipo === 'saque') usuario.saldo += transacao.valor; 
-        } else if (acao === 'fraude') {
-            transacao.status = 'fraude';
         } else {
-            return res.status(400).json({ erro: 'Ação inválida.' });
+            transacao.status = acao; // rejeitado ou fraude
+            if (transacao.tipo === 'saque' && acao === 'rejeitado') usuario.saldo += transacao.valor;
         }
 
         await transacao.save();
         await usuario.save();
-        res.json({ mensagem: `✅ Transação de ${transacao.tipo} marcada como: ${acao.toUpperCase()}` });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+        res.json({ mensagem: 'Transação processada!' });
+    } catch (erro) { res.status(500).json({ erro: 'Erro ao processar' }); }
 });
 
-// ==========================================
-// 6. CRIAR POST PROFISSIONAL NO FEED
-// ==========================================
+// 6. FEED E INJETAR SALDO
 router.post('/criar-post', auth, adminAuth, async (req, res) => {
-    try {
-        const { titulo, mensagem, midiaBase64, formatoMidia, tipo, isFixado } = req.body;
-        
-        const novoPost = new Feed({ 
-            titulo, mensagem, midiaBase64, formatoMidia, tipo, isFixado 
-        });
-        await novoPost.save();
-
-        res.json({ mensagem: '📢 Postagem publicada com sucesso no Feed!' });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+    const novoPost = new Feed(req.body);
+    await novoPost.save();
+    res.json({ mensagem: 'Post criado!' });
 });
 
-// ==========================================
-// 7. FIXAR OU DESFIXAR POST
-// ==========================================
-router.patch('/fixar-post/:id', auth, adminAuth, async (req, res) => {
-    try {
-        const post = await Feed.findById(req.params.id);
-        if (!post) return res.status(404).json({ erro: 'Post não encontrado.' });
-        
-        post.isFixado = !post.isFixado; // Inverte o estado (se for true vira false, se for false vira true)
-        await post.save();
-        
-        res.json({ mensagem: post.isFixado ? 'Post fixado no topo! 📌' : 'Post desfixado.' });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
+    const { telefoneUsuario, valor } = req.body;
+    const cliente = await User.findOne({ telefone: telefoneUsuario });
+    cliente.saldo += valor;
+    await cliente.save();
+    res.json({ mensagem: 'Saldo injetado!' });
+});
+
+router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
+    const pendentes = await Transaction.find({ status: 'pendente' }).sort({ createdAt: -1 });
+    res.json(pendentes);
 });
 
 module.exports = router;
