@@ -4,10 +4,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 
 const app = express();
-
 app.use(cors());
 
-// Aumentando o limite para permitir o envio de fotos (Comprovantes)
+// Limite para envio de fotos/comprovantes
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -19,7 +18,8 @@ const taskRoutes = require('./taskRoutes');
 const networkRoutes = require('./networkRoutes');
 const adminRoutes = require('./adminRoutes');
 const feedRoutes = require('./feedRoutes');
-const supportRoutes = require('./supportRoutes'); // NOVO: Banco do Chat/Suporte adicionado
+const supportRoutes = require('./supportRoutes');
+const systemRoutes = require('./systemRoutes'); // NOVO: Rotas do Sistema (Termos)
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
@@ -29,7 +29,8 @@ app.use('/api/tarefas', taskRoutes);
 app.use('/api/rede', networkRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/feed', feedRoutes); 
-app.use('/api/suporte', supportRoutes); // NOVO: URL do Chat/Suporte ligada no motor
+app.use('/api/suporte', supportRoutes);
+app.use('/api/sistema', systemRoutes); // NOVO: URL do Sistema
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
@@ -37,11 +38,9 @@ app.get('/', (req, res) => {
 
 mongoose.connect(process.env.MONGO_URI)
 .then(() => {
-    console.log('✅ Banco de dados MongoDB conectado com sucesso!');
+    console.log('✅ Banco de dados MongoDB conectado!');
     app.listen(process.env.PORT, () => {
         console.log(`🚀 Servidor BlackRock rodando na porta ${process.env.PORT}`);
     });
 })
-.catch((erro) => {
-    console.log('❌ Erro crítico ao conectar no MongoDB:', erro.message);
-});
+.catch((erro) => console.log('❌ Erro crítico no MongoDB:', erro.message));
