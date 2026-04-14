@@ -5,13 +5,28 @@ const User = require('./User');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// REGISTRO
+// ==========================================
+// REGISTRO COM SEGURANÇA AVANÇADA
+// ==========================================
 router.post('/register', async (req, res) => {
     try {
         const { nome, telefone, senha, codigoConvite } = req.body;
+        
+        // 1. Verificação se o telefone já existe
         const usuarioExiste = await User.findOne({ telefone });
         if (usuarioExiste) return res.status(400).json({ erro: 'Este telefone já está registrado.' });
 
+        // 2. Trava de Segurança da Senha (Mínimo 6 dígitos, letras e números)
+        if (senha.length < 6) {
+            return res.status(400).json({ erro: 'Segurança: A senha deve ter pelo menos 6 caracteres.' });
+        }
+        const possuiLetra = /[a-zA-Z]/.test(senha);
+        const possuiNumero = /[0-9]/.test(senha);
+        if (!possuiLetra || !possuiNumero) {
+            return res.status(400).json({ erro: 'Segurança: A senha deve conter uma mistura de letras e números.' });
+        }
+
+        // 3. Criação da conta
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash(senha, salt);
         const idGerado = Math.floor(10000 + Math.random() * 90000);
@@ -30,12 +45,25 @@ router.post('/register', async (req, res) => {
     }
 });
 
-// LOGIN
+// ==========================================
+// LOGIN (NOME + NÚMERO + SENHA)
+// ==========================================
 router.post('/login', async (req, res) => {
     try {
-        const { telefone, senha } = req.body;
+        const { nome, telefone, senha } = req.body;
+        
+        // Exige os 3 campos obrigatórios
+        if (!nome || !telefone || !senha) {
+            return res.status(400).json({ erro: 'Preencha o Nome, Número e Senha para entrar.' });
+        }
+
         const usuario = await User.findOne({ telefone });
         if (!usuario) return res.status(400).json({ erro: 'Usuário não encontrado.' });
+
+        // Verifica se o nome digitado corresponde ao dono do número
+        if (usuario.nome !== nome) {
+            return res.status(400).json({ erro: 'O nome do usuário não corresponde a este número.' });
+        }
 
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
@@ -47,7 +75,9 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// ATUALIZAR PERFIL (Novo)
+// ==========================================
+// ATUALIZAR PERFIL E DADOS BANCÁRIOS
+// ==========================================
 router.put('/perfil/atualizar', auth, async (req, res) => {
     try {
         const { nome, novaSenha, senhaAtual, carteiraPreferencial, numeroRecebimento, nomeTitularConta } = req.body;
@@ -62,6 +92,10 @@ router.put('/perfil/atualizar', auth, async (req, res) => {
         if (nomeTitularConta) usuario.nomeTitularConta = nomeTitularConta;
         
         if (novaSenha) {
+            // Se ele for trocar a senha, aplica a mesma regra de segurança
+            if (novaSenha.length < 6 || !/[a-zA-Z]/.test(novaSenha) || !/[0-9]/.test(novaSenha)) {
+                return res.status(400).json({ erro: 'A nova senha deve ter letras, números e no mínimo 6 caracteres.' });
+            }
             const salt = await bcrypt.genSalt(10);
             usuario.senha = await bcrypt.hash(novaSenha, salt);
         }
