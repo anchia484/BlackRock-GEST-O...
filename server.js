@@ -6,6 +6,8 @@ const cors = require('cors');
 const app = express();
 
 app.use(cors());
+
+// Aumentando o limite para permitir o envio de fotos (Comprovantes)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
@@ -16,7 +18,8 @@ const planRoutes = require('./planRoutes');
 const taskRoutes = require('./taskRoutes');
 const networkRoutes = require('./networkRoutes');
 const adminRoutes = require('./adminRoutes');
-const feedRoutes = require('./feedRoutes'); // NOVO: Rotas do Feed
+const feedRoutes = require('./feedRoutes');
+const supportRoutes = require('./supportRoutes'); // NOVO: Banco do Chat/Suporte adicionado
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
@@ -25,7 +28,8 @@ app.use('/api/planos', planRoutes);
 app.use('/api/tarefas', taskRoutes);
 app.use('/api/rede', networkRoutes);
 app.use('/api/admin', adminRoutes);
-app.use('/api/feed', feedRoutes); // NOVO: Ligando a rota do feed
+app.use('/api/feed', feedRoutes); 
+app.use('/api/suporte', supportRoutes); // NOVO: URL do Chat/Suporte ligada no motor
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');

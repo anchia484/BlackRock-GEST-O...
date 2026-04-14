@@ -18,10 +18,12 @@ const userSchema = new mongoose.Schema({
     isAdmin: { type: Boolean, default: false },
     isAgente: { type: Boolean, default: false },
 
-    // Dados para Recebimento de Saques (Novos)
     carteiraPreferencial: { type: String, enum: ['M-Pesa', 'E-Mola', 'Nenhuma'], default: 'Nenhuma' },
     numeroRecebimento: { type: String, default: '' },
-    nomeTitularConta: { type: String, default: '' }
+    nomeTitularConta: { type: String, default: '' },
+
+    // NOVO: Forçar o usuário a trocar a senha se o Admin tiver resetado
+    precisaTrocarSenha: { type: Boolean, default: false }
     
 }, { timestamps: true });
 
