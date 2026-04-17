@@ -19,7 +19,8 @@ const networkRoutes = require('./networkRoutes');
 const adminRoutes = require('./adminRoutes');
 const feedRoutes = require('./feedRoutes');
 const supportRoutes = require('./supportRoutes');
-const systemRoutes = require('./systemRoutes'); // NOVO: Rotas do Sistema (Termos)
+const systemRoutes = require('./systemRoutes');
+const userRoutes = require('./userRoutes'); // <-- ADICIONADO: Rota de Usuário
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
@@ -30,7 +31,8 @@ app.use('/api/rede', networkRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/feed', feedRoutes); 
 app.use('/api/suporte', supportRoutes);
-app.use('/api/sistema', systemRoutes); // NOVO: URL do Sistema
+app.use('/api/sistema', systemRoutes);
+app.use('/api/usuario', userRoutes); // <-- ADICIONADO: Conexão com o frontend
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
@@ -39,8 +41,8 @@ app.get('/', (req, res) => {
 mongoose.connect(process.env.MONGO_URI)
 .then(() => {
     console.log('✅ Banco de dados MongoDB conectado!');
-    app.listen(process.env.PORT, () => {
-        console.log(`🚀 Servidor BlackRock rodando na porta ${process.env.PORT}`);
+    app.listen(process.env.PORT || 3000, () => {
+        console.log(`🚀 Servidor rodando na porta ${process.env.PORT || 3000}`);
     });
 })
-.catch((erro) => console.log('❌ Erro crítico no MongoDB:', erro.message));
+.catch((err) => console.log('Erro ao conectar no MongoDB:', err));

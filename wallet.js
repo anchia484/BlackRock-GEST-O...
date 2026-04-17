@@ -13,16 +13,16 @@ router.post('/deposito', auth, async (req, res) => {
         const novaTransacao = new Transaction({
             usuarioId: req.usuario.id,
             tipo: 'deposito',
-            valor,
-            metodo,
-            numeroTelefone,
+            valor: valor,
+            operadora: metodo, // Mapeado para o banco
+            numeroTransferencia: numeroTelefone, // Mapeado para o banco
             status: 'pendente'
         });
 
         await novaTransacao.save();
         res.json({ mensagem: 'Pedido de depósito enviado com sucesso! Aguarde a aprovação da Diretoria.' });
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor.' });
+        res.status(500).json({ erro: 'Erro no servidor ao processar depósito.' });
     }
 });
 
@@ -42,9 +42,9 @@ router.post('/saque', auth, async (req, res) => {
         const novaTransacao = new Transaction({
             usuarioId: req.usuario.id,
             tipo: 'saque',
-            valor,
-            metodo,
-            numeroTelefone,
+            valor: valor,
+            operadora: metodo, // Mapeado para o banco
+            numeroContaDestino: numeroTelefone, // Mapeado para o banco
             status: 'pendente'
         });
 
@@ -54,7 +54,7 @@ router.post('/saque', auth, async (req, res) => {
             saldoRestante: usuario.saldo 
         });
     } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor.' });
+        res.status(500).json({ erro: 'Erro no servidor ao processar saque.' });
     }
 });
 
