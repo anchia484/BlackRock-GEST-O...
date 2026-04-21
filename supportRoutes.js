@@ -3,92 +3,58 @@ const Message = require('./Message');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// 1. USUÁRIO ENVIA MENSAGEM PARA O ADMIN
+// 1. ENVIAR MENSAGEM
 router.post('/enviar', auth, async (req, res) => {
     try {
         const { texto } = req.body;
-        if (!texto) return res.status(400).json({ erro: 'A mensagem não pode estar vazia.' });
+        if (!texto) return res.status(400).json({ erro: 'Vazio' });
 
-        const novaMensagem = new Message({
-            usuarioId: req.usuario.id,
-            remetente: 'usuario',
-            texto
-        });
-
+        const novaMensagem = new Message({ usuarioId: req.usuario.id, remetente: 'usuario', texto });
         await novaMensagem.save();
-        res.json({ mensagem: 'Mensagem enviada ao suporte!' });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao enviar mensagem.' });
-    }
+        res.json({ mensagem: 'Enviado' });
+    } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-// 2. USUÁRIO LÊ O SEU PRÓPRIO CHAT
+// 2. LER CHAT
 router.get('/meu-chat', auth, async (req, res) => {
     try {
         const mensagens = await Message.find({ usuarioId: req.usuario.id }).sort({ createdAt: 1 });
         res.json(mensagens);
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao carregar chat.' });
-    }
+    } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-// ==========================================
-// NOVAS ROTAS (SISTEMA DE EDIÇÃO E EXCLUSÃO)
-// ==========================================
-
-// 3. EDITAR MENSAGEM (Com regra estrita de 20 minutos)
+// 3. EDITAR MENSAGEM
 router.put('/editar/:id', auth, async (req, res) => {
     try {
         const { texto } = req.body;
-        
-        // Procura a mensagem específica certificando-se que pertence a quem fez o pedido
         const mensagem = await Message.findOne({ _id: req.params.id, usuarioId: req.usuario.id });
         
-        if (!mensagem) {
-            return res.status(404).json({ erro: 'Mensagem não encontrada ou não pertence a este terminal.' });
-        }
+        if (!mensagem || mensagem.isApagada) return res.status(404).json({ erro: 'Não disponível.' });
         
-        // Calcula a diferença de tempo em minutos desde a criação da mensagem
-        const diffMinutos = (new Date() - new Date(mensagem.createdAt)) / (1000 * 60);
-        
-        if (diffMinutos > 20) {
-            return res.status(400).json({ erro: 'O tempo limite de 20 minutos para edição expirou.' });
-        }
+        const diff = (new Date() - new Date(mensagem.createdAt)) / (1000 * 60);
+        if (diff > 20) return res.status(400).json({ erro: 'Tempo limite expirado.' });
 
-        // Atualiza e guarda a mensagem
         mensagem.texto = texto;
         await mensagem.save();
-        
-        res.json({ mensagem: 'Mensagem editada com sucesso.' });
-    } catch (erro) { 
-        res.status(500).json({ erro: 'Erro interno ao processar a edição.' }); 
-    }
+        res.json({ mensagem: 'Editado.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-// 4. APAGAR MENSAGEM (Com regra estrita de 20 minutos)
+// 4. APAGAR MENSAGEM (O SEGREDO: Em vez de eliminar, muda o estado)
 router.delete('/apagar/:id', auth, async (req, res) => {
     try {
-        // Procura a mensagem garantindo que pertence ao utilizador
         const mensagem = await Message.findOne({ _id: req.params.id, usuarioId: req.usuario.id });
-        
-        if (!mensagem) {
-            return res.status(404).json({ erro: 'Mensagem não encontrada ou não pertence a este terminal.' });
-        }
+        if (!mensagem || mensagem.isApagada) return res.status(404).json({ erro: 'Não disponível.' });
 
-        // Bloqueio de tempo real no backend
-        const diffMinutos = (new Date() - new Date(mensagem.createdAt)) / (1000 * 60);
-        
-        if (diffMinutos > 20) {
-            return res.status(400).json({ erro: 'O tempo limite de 20 minutos para anular expirou.' });
-        }
+        const diff = (new Date() - new Date(mensagem.createdAt)) / (1000 * 60);
+        if (diff > 20) return res.status(400).json({ erro: 'Tempo limite expirado.' });
 
-        // Remove a mensagem da base de dados
-        await Message.deleteOne({ _id: req.params.id });
+        mensagem.isApagada = true;
+        mensagem.texto = "🚫 Mensagem anulada"; // Para limpar na base de dados
+        await mensagem.save();
         
-        res.json({ mensagem: 'Mensagem anulada com sucesso.' });
-    } catch (erro) { 
-        res.status(500).json({ erro: 'Erro interno ao anular a mensagem.' }); 
-    }
+        res.json({ mensagem: 'Apagada.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
 module.exports = router;
