@@ -13,7 +13,7 @@ app.use(express.urlencoded({ limit: '50mb', extended: true }));
 // Importando as rotas
 const authRoutes = require('./auth');
 const walletRoutes = require('./walletRoutes');
-const planRoutes = require('./planos');
+const planRoutes = require('./planRoutes');
 const taskRoutes = require('./taskRoutes');
 const networkRoutes = require('./networkRoutes');
 const adminRoutes = require('./adminRoutes');
