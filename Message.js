@@ -8,4 +8,6 @@ const messageSchema = new mongoose.Schema({
     isApagada: { type: Boolean, default: false }
 }, { timestamps: true });
 
-module.exports = mongoose.model('Message', messageSchema, 'mensagens_suporte');
+const Message = mongoose.models.Message || mongoose.model('Message', messageSchema, 'mensagens_suporte');
+
+module.exports = Message;

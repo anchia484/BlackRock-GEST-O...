@@ -11,8 +11,8 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Importando as rotas
-const authRoutes = require('./auth');
-const walletRoutes = require('./wallet');
+const authRoutes = require('./authRoutes');
+const walletRoutes = require('./walletRoutes');
 const planRoutes = require('./planRoutes');
 const taskRoutes = require('./taskRoutes');
 const networkRoutes = require('./networkRoutes');
