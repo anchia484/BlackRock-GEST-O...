@@ -8,8 +8,8 @@ const transactionSchema = new mongoose.Schema({
     tipo: { type: String, enum: ['deposito', 'saque', 'ganho_tarefa', 'bonus_rede'], required: true },
     valor: { type: Number, required: true },
     
-    // Campos Financeiros (M-Pesa / E-Mola)
-    operadora: { type: String, enum: ['M-Pesa', 'E-Mola', null], default: null },
+    // Campos Financeiros
+    operadora: { type: String, enum: ['M-Pesa', 'E-Mola', 'M-PESA', 'E-MOLA', null], default: null },
     
     // Campos exclusivos de SAQUE
     nomeContaDestino: { type: String, default: null },
@@ -18,10 +18,10 @@ const transactionSchema = new mongoose.Schema({
     // Campos exclusivos de DEPÓSITO
     numeroTransferencia: { type: String, default: null }, // O número que enviou o dinheiro
     idTransacaoBancaria: { type: String, default: null }, // Ex: PP260411.1352.u67229
-    comprovanteBase64: { type: String, default: null },   // A foto em formato de texto (para o Admin ver em tela cheia)
+    comprovanteBase64: { type: String, default: null },   // A foto em formato de texto
     
     // Status da Transação
-    status: { type: String, enum: ['pendente', 'aprovado', 'rejeitado', 'fraude'], default: 'pendente' }
+    status: { type: String, enum: ['pendente', 'aprovado', 'rejeitado', 'fraude', 'concluido', 'falhou'], default: 'pendente' }
 }, { timestamps: true });
 
-module.exports = mongoose.model('Transaction', transactionSchema, 'transacoes_blackrock');
+module.exports = mongoose.model('Transaction', transactionSchema, 'historico_transacoes');
