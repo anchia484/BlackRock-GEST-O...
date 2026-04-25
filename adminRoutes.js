@@ -156,7 +156,7 @@ router.delete('/planos/apagar/:id', auth, adminAuth, async (req, res) => {
 // Criar novo Requisito
 router.post('/requisitos/criar', auth, adminAuth, async (req, res) => {
     try {
-        const Requirement = require('./Requirement'); // Modelo que criamos na Parte 3 da resposta anterior
+        const Requirement = require('./requirement'); // Modelo que criamos na Parte 3 da resposta anterior
         const novoReq = new Requirement({
             chave: "REQ_" + Date.now(),
             titulo: req.body.titulo,
@@ -174,7 +174,7 @@ router.post('/requisitos/criar', auth, adminAuth, async (req, res) => {
 // Listar todos os Requisitos para o ADM
 router.get('/requisitos', auth, adminAuth, async (req, res) => {
     try {
-        const Requirement = require('./Requirement');
+        const Requirement = require('./requirement');
         const reqs = await Requirement.find();
         res.json(reqs);
     } catch (e) { res.status(500).json({ erro: 'Erro ao listar.' }); }
@@ -183,7 +183,7 @@ router.get('/requisitos', auth, adminAuth, async (req, res) => {
 // Apagar Requisito
 router.delete('/requisitos/apagar/:id', auth, adminAuth, async (req, res) => {
     try {
-        const Requirement = require('./Requirement');
+        const Requirement = require('./requirement');
         await Requirement.findByIdAndDelete(req.params.id);
         res.json({ mensagem: 'Regra removida.' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao apagar.' }); }
