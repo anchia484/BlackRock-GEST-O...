@@ -1,21 +1,17 @@
 const express = require('express');
 const Plan = require('./Plan');
 const User = require('./User');
-const Feed = require('./Feed'); // Importando o banco do Feed
+const Feed = require('./Feed');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// Busca todos os planos
 router.get('/', async (req, res) => {
     try {
         const planos = await Plan.find();
         res.json(planos);
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
-    }
+    } catch (erro) { res.status(500).json({ erro: 'Erro ao carregar planos.' }); }
 });
 
-// Comprar plano
 router.post('/comprar', auth, async (req, res) => {
     try {
         const { planoId } = req.body;
@@ -23,18 +19,19 @@ router.post('/comprar', auth, async (req, res) => {
         const plano = await Plan.findById(planoId);
 
         if (!plano) return res.status(404).json({ erro: 'Plano não encontrado.' });
-        if (usuario.saldo < plano.preco) return res.status(400).json({ erro: 'Saldo insuficiente para comprar este plano.' });
+        // CORREÇÃO: Usando 'valorEntrada' conforme o Modelo Plan.js
+        if (usuario.saldo < plano.valorEntrada) return res.status(400).json({ erro: 'Saldo insuficiente.' });
 
-        usuario.saldo -= plano.preco;
+        usuario.saldo -= plano.valorEntrada;
         usuario.planoAtivo = plano.nome;
         
         const dataExpiracao = new Date();
-        dataExpiracao.setDate(dataExpiracao.getDate() + plano.validadeDias);
+        // CORREÇÃO: Usando 'duracaoDias' conforme o Modelo Plan.js
+        dataExpiracao.setDate(dataExpiracao.getDate() + plano.duracaoDias);
         usuario.dataExpiracaoPlano = dataExpiracao;
 
         await usuario.save();
 
-        // AQUI ESTÁ A MÁGICA: Post automático no Feed de compra de plano
         const postAuto = new Feed({
             titulo: 'Novo Investidor!',
             mensagem: `O investidor ID ${usuario.idUnico} acaba de ativar o plano ${plano.nome}. 🚀`,
@@ -43,15 +40,8 @@ router.post('/comprar', auth, async (req, res) => {
         });
         await postAuto.save();
 
-        res.json({ 
-            mensagem: `Parabéns! Você comprou o plano ${plano.nome}.`,
-            novoSaldo: usuario.saldo,
-            plano: usuario.planoAtivo
-        });
-
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
-    }
+        res.json({ mensagem: `Sucesso! Plano ${plano.nome} ativo.`, user: usuario });
+    } catch (erro) { res.status(500).json({ erro: 'Erro interno na compra.' }); }
 });
 
 module.exports = router;

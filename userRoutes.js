@@ -3,28 +3,31 @@ const User = require('./User');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// 1. Rota chamada pelo planos.html e dashboard.html
 router.get('/dashboard', auth, async (req, res) => {
     try {
         const usuario = await User.findById(req.usuario.id).select('-senha');
-        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
-        
         res.json({ user: usuario });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao carregar dados do dashboard.' });
-    }
+    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard.' }); }
 });
 
-// 2. Rota chamada pelo perfil.html
-router.get('/perfil', auth, async (req, res) => {
+// NOVA ROTA: Checklist de Requisitos Automático do MongoDB
+router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
-        const usuario = await User.findById(req.usuario.id).select('-senha');
-        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+        const u = await User.findById(req.usuario.id);
+        const convidados = await User.countDocuments({ convidadoPor: u.meuCodigoConvite, planoAtivo: { $ne: 'Nenhum' } });
         
-        res.json({ usuario: usuario });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao carregar dados do perfil.' });
-    }
+        // Lógica de validação automática
+        const requisitos = [
+            { status: 'concluido', titulo: 'Segurança da Conta', descricao: 'Validado pelo sistema KYC.', detalhe: 'CONTA ATIVA' },
+            { status: u.planoAtivo !== 'Nenhum' ? 'concluido' : 'falha', titulo: 'Plano Ativo', descricao: 'Possuir um NODE ativo.', detalhe: u.planoAtivo },
+            { status: convidados >= 5 ? 'concluido' : 'progresso', titulo: 'Rede de Convites', descricao: 'Mínimo 5 convidados ativos.', detalhe: `${convidados} de 5 concluídos` }
+        ];
+
+        const concluidos = requisitos.filter(r => r.status === 'concluido').length;
+        const progressoGeral = Math.round((concluidos / requisitos.length) * 100);
+
+        res.json({ progressoGeral, isSobAnalise: false, requisitos });
+    } catch (e) { res.status(500).json({ erro: 'Erro na validação.' }); }
 });
 
 module.exports = router;

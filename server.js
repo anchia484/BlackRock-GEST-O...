@@ -33,6 +33,8 @@ app.use('/api/feed', feedRoutes);
 app.use('/api/suporte', supportRoutes);
 app.use('/api/sistema', systemRoutes);
 app.use('/api/usuario', userRoutes); // <-- ADICIONADO: Conexão com o frontend
+const notificationRoutes = require('./notificationRoutes'); // Crie este arquivo na Parte 2
+app.use('/api/notificacoes', notificationRoutes);
 
 app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
