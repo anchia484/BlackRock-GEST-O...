@@ -2,129 +2,189 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
-const Transaction = require('./Transaction');
-const Feed = require('./Feed');
-const Plan = require('./Plan');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-const adminAuth = async (req, res, next) => {
-    try {
-        const usuario = await User.findById(req.usuario.id);
-        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'ACESSO NEGADO' });
-        next();
-    } catch (erro) { res.status(500).json({ erro: 'Erro de segurança.' }); }
-};
-
-// 1. DASHBOARD (Estatísticas Reais)
-router.get('/dashboard', auth, adminAuth, async (req, res) => {
-    try {
-        const totalUsuarios = await User.countDocuments({ isAdmin: false });
-        const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
-        const transacoes = await Transaction.find({ status: 'aprovado' });
-        
-        const totalDepositado = transacoes.filter(t => t.tipo === 'deposito').reduce((acc, curr) => acc + curr.valor, 0);
-        const totalSacado = transacoes.filter(t => t.tipo === 'saque').reduce((acc, curr) => acc + curr.valor, 0);
-
-        res.json({
-            totalUsuarios,
-            usuariosAtivos,
-            caixaLiquido: totalDepositado - totalSacado,
-            totalDepositado,
-            totalSacado
-        });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard' }); }
-});
-
-// 2. CONFIGURAR PLANOS (Criar ou Editar)
-router.post('/configurar-plano', auth, adminAuth, async (req, res) => {
-    try {
-        const { nome, preco, ganhoDiario, limiteTarefasDia, validadeDias } = req.body;
-        const plano = await Plan.findOneAndUpdate(
-            { nome }, 
-            { preco, ganhoDiario, limiteTarefasDia, validadeDias },
-            { upsert: true, new: true }
-        );
-        res.json({ mensagem: `Plano ${nome} atualizado!`, plano });
-    } catch (erro) { res.status(500).json({ erro: 'Erro ao configurar plano.' }); }
-});
-
-// 3. SETUP ADMIN INICIAL
-router.post('/setup-admin', async (req, res) => {
-    try {
-        const adminExiste = await User.findOne({ isAdmin: true });
-        if (adminExiste) return res.status(400).json({ erro: 'Admin já existe.' });
-        const salt = await bcrypt.genSalt(10);
-        const senhaCriptografada = await bcrypt.hash('SenhaAdmin123!', salt);
-        const admin = new User({
-            nome: 'Diretor BlackRock', telefone: 'ADMIN', senha: senhaCriptografada,
-            idUnico: 0, meuCodigoConvite: 'ADMIN0', isAdmin: true
-        });
-        await admin.save();
-        res.json({ mensagem: 'Admin criado!' });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no setup' }); }
-});
-
-// 4. LOGIN ADMIN
+// LOGIN EXCLUSIVO PARA ADMIN
 router.post('/login', async (req, res) => {
     try {
         const { telefone, senha } = req.body;
-        const usuario = await User.findOne({ telefone });
-        if (!usuario || !usuario.isAdmin) return res.status(403).json({ erro: 'Acesso negado.' });
-        const senhaValida = await bcrypt.compare(senha, usuario.senha);
-        if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
-        const token = jwt.sign({ id: usuario._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '12h' });
-        res.json({ token, adminLogado: usuario.nome });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no login' }); }
+        const admin = await User.findOne({ telefone, isAdmin: true });
+
+        if (!admin) return res.status(403).json({ erro: 'Acesso negado. Credenciais de diretoria não encontradas.' });
+
+        const senhaValida = await bcrypt.compare(senha, admin.senha);
+        if (!senhaValida) return res.status(401).json({ erro: 'Senha incorreta.' });
+
+        const token = jwt.sign({ id: admin._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        res.json({ token, admin: { nome: admin.nome, id: admin.idUnico } });
+    } catch (e) { res.status(500).json({ erro: 'Erro no servidor de autenticação.' }); }
 });
 
-// 5. PROCESSAR TRANSAÇÕES + POST AUTOMÁTICO
+// MIDDLEWARE DE PROTEÇÃO PARA TODAS AS ROTAS ABAIXO
+const verificarDiretoria = async (req, res, next) => {
+    if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Área restrita à Diretoria.' });
+    next();
+};
+
+module.exports = router;
+// ROTA 1: ESTATÍSTICAS REAIS DO DASHBOARD MASTER
+router.get('/dashboard', auth, async (req, res) => {
+    try {
+        // Apenas o ADM passa
+        if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Acesso negado.' });
+
+        const transacoes = await Transaction.find({ status: 'aprovado' });
+        const totalDepositado = transacoes.filter(t => t.tipo === 'deposito').reduce((a, b) => a + b.valor, 0);
+        const totalSacado = transacoes.filter(t => t.tipo === 'saque').reduce((a, b) => a + b.valor, 0);
+        
+        const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
+
+        // Puxa as últimas 10 transações de qualquer tipo para o log
+        const ultimas = await Transaction.find().sort({ createdAt: -1 }).limit(10);
+        const logs = ultimas.map(u => ({
+            usuario: u.nomeUsuario || "ID: " + u.idUnicoUsuario,
+            tipo: u.tipo.toUpperCase(),
+            valor: u.tipo === 'saque' ? -u.valor : u.valor,
+            data: u.createdAt
+        }));
+
+        res.json({
+            totalDepositado,
+            totalSacado,
+            caixaLiquido: totalDepositado - totalSacado,
+            usuariosAtivos,
+            ultimasAcoes: logs
+        });
+    } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço global.' }); }
+});
+// ROTA 2: LISTAR TRANSAÇÕES PENDENTES
+router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
+    try {
+        // Puxa tudo o que for depósito ou saque e que esteja pendente
+        const transacoes = await Transaction.find({ 
+            status: 'pendente', 
+            tipo: { $in: ['deposito', 'saque'] } 
+        }).sort({ createdAt: 1 }); // Mais antigos primeiro
+
+        res.json(transacoes);
+    } catch (erro) { 
+        res.status(500).json({ erro: 'Erro ao buscar pendentes.' }); 
+    }
+});
+
+// ROTA 3: PROCESSAR TRANSAÇÃO (A Aprovação Final)
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
-        const { transacaoId, acao } = req.body; 
+        const { transacaoId, acao } = req.body; // acao = 'aprovado', 'rejeitado', 'fraude'
+        
         const transacao = await Transaction.findById(transacaoId);
-        const usuario = await User.findById(transacao.usuarioId);
+        if (!transacao || transacao.status !== 'pendente') {
+            return res.status(400).json({ erro: 'Transação não encontrada ou já processada.' });
+        }
 
+        const usuario = await User.findById(transacao.usuarioId);
+        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+
+        // LÓGICA FINANCEIRA IMPLACÁVEL
         if (acao === 'aprovado') {
-            transacao.status = 'aprovado';
-            if (transacao.tipo === 'deposito') usuario.saldo += transacao.valor;
-            if (transacao.tipo === 'saque') {
+            if (transacao.tipo === 'deposito') {
+                // Depósito Aprovado: O dinheiro entra na conta do utilizador
+                usuario.saldo += transacao.valor;
+            } 
+            else if (transacao.tipo === 'saque') {
+                // Saque Aprovado: O dinheiro já foi deduzido no ato do pedido.
+                // Criamos um Post automático no Feed para provar que a plataforma paga!
                 const post = new Feed({
-                    titulo: 'Pagamento Realizado! ✅',
-                    mensagem: `O usuário ${usuario.nome.split(' ')[0]} recebeu ${transacao.valor} MZN.`,
-                    tipo: 'prova_pagamento'
+                    titulo: 'Saque Pago com Sucesso! 💸',
+                    mensagem: `O investidor ${usuario.nome.split(' ')[0]} (ID: ${usuario.idUnico}) acaba de receber ${transacao.valor} MZN na sua conta M-Pesa/E-Mola. A BlackRock não falha!`,
+                    tipo: 'prova_pagamento',
+                    autor: 'Sistema Financeiro'
                 });
                 await post.save();
             }
-        } else {
-            transacao.status = acao; // rejeitado ou fraude
-            if (transacao.tipo === 'saque' && acao === 'rejeitado') usuario.saldo += transacao.valor;
+        } 
+        else if (acao === 'rejeitado' || acao === 'fraude') {
+            if (transacao.tipo === 'saque') {
+                // Saque Rejeitado: O dinheiro que estava bloqueado volta para o utilizador
+                usuario.saldo += transacao.valor;
+            }
+            if (acao === 'fraude') {
+                // Se marcar como fraude, podemos também bloquear o utilizador preventivamente
+                usuario.status = 'analise'; 
+            }
         }
 
+        // Guarda as alterações
+        transacao.status = acao;
         await transacao.save();
         await usuario.save();
-        res.json({ mensagem: 'Transação processada!' });
-    } catch (erro) { res.status(500).json({ erro: 'Erro ao processar' }); }
+
+        res.json({ mensagem: `Transação ${acao} com sucesso. Saldo atualizado.` });
+    } catch (erro) { 
+        res.status(500).json({ erro: 'Erro crítico ao processar valores.' }); 
+    }
+});
+// ==========================================
+// 6. CONFIGURAÇÕES DE NODES (PLANOS)
+// ==========================================
+
+// Criar Novo Plano
+router.post('/planos/criar', auth, adminAuth, async (req, res) => {
+    try {
+        const novoPlano = new Plan(req.body);
+        await novoPlano.save();
+        res.json({ mensagem: 'Node criado e disponível para os usuários.' });
+    } catch (e) {
+        res.status(500).json({ erro: 'Erro ao criar plano.' });
+    }
 });
 
-// 6. FEED E INJETAR SALDO
-router.post('/criar-post', auth, adminAuth, async (req, res) => {
-    const novoPost = new Feed(req.body);
-    await novoPost.save();
-    res.json({ mensagem: 'Post criado!' });
+// Apagar Plano
+router.delete('/planos/apagar/:id', auth, adminAuth, async (req, res) => {
+    try {
+        await Plan.findByIdAndDelete(req.params.id);
+        res.json({ mensagem: 'Node removido do sistema.' });
+    } catch (e) {
+        res.status(500).json({ erro: 'Erro ao apagar plano.' });
+    }
+});
+// ==========================================
+// 7. SISTEMA DE REQUISITOS (Checklist Master)
+// ==========================================
+
+// Criar novo Requisito
+router.post('/requisitos/criar', auth, adminAuth, async (req, res) => {
+    try {
+        const Requirement = require('./Requirement'); // Modelo que criamos na Parte 3 da resposta anterior
+        const novoReq = new Requirement({
+            chave: "REQ_" + Date.now(),
+            titulo: req.body.titulo,
+            descricao: req.body.descricao,
+            tipoValidacao: req.body.tipoValidacao,
+            valorNecessario: req.body.valorNecessario
+        });
+        await novoReq.save();
+        res.json({ mensagem: 'Nova regra de bónus injetada no algoritmo.' });
+    } catch (e) {
+        res.status(500).json({ erro: 'Erro ao criar requisito.' });
+    }
 });
 
-router.post('/adicionar-saldo', auth, adminAuth, async (req, res) => {
-    const { telefoneUsuario, valor } = req.body;
-    const cliente = await User.findOne({ telefone: telefoneUsuario });
-    cliente.saldo += valor;
-    await cliente.save();
-    res.json({ mensagem: 'Saldo injetado!' });
+// Listar todos os Requisitos para o ADM
+router.get('/requisitos', auth, adminAuth, async (req, res) => {
+    try {
+        const Requirement = require('./Requirement');
+        const reqs = await Requirement.find();
+        res.json(reqs);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao listar.' }); }
 });
 
-router.get('/transacoes-pendentes', auth, adminAuth, async (req, res) => {
-    const pendentes = await Transaction.find({ status: 'pendente' }).sort({ createdAt: -1 });
-    res.json(pendentes);
+// Apagar Requisito
+router.delete('/requisitos/apagar/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const Requirement = require('./Requirement');
+        await Requirement.findByIdAndDelete(req.params.id);
+        res.json({ mensagem: 'Regra removida.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao apagar.' }); }
 });
-
-module.exports = router;
