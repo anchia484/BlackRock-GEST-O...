@@ -26,6 +26,27 @@ router.post('/login', async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro no login.' }); }
 });
 
+// ==========================================
+// 🚨 PORTA SECRETA TEMPORÁRIA (O SEU ACESSO VIP)
+// ==========================================
+router.get('/promover/:telefone', async (req, res) => {
+    try {
+        const numero = req.params.telefone;
+        const usuario = await User.findOne({ telefone: numero });
+        
+        if (!usuario) {
+            return res.send(`<h1>Erro:</h1> O número ${numero} ainda não tem conta criada no sistema normal.`);
+        }
+
+        usuario.isAdmin = true;
+        await usuario.save();
+        
+        res.send(`<h1>SUCESSO ABSOLUTO!</h1> <p>O número <b>${numero}</b> foi promovido a DIRETOR.</p> <p>Pode voltar ao <b>admin_login.html</b> e fazer login!</p>`);
+    } catch (e) {
+        res.send('Erro no sistema: ' + e.message);
+    }
+});
+
 const adminAuth = async (req, res, next) => {
     if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Área restrita à Diretoria.' });
     next();
