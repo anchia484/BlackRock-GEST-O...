@@ -554,73 +554,58 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
 });
-// ==========================================
-// 17. ÁREA DE SUPORTE (CHAT ADMIN BLINDADO)
-// ==========================================
+async function carregarLista() {
+    const container = document.getElementById('lista-usuarios');
+    // Mostra que está a carregar
+    container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Buscando conversas...</div>';
 
-// 1. Carregar a Lista de Usuários que mandaram mensagem
-router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
     try {
-        const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
-        const conversas = {};
-
-        mensagens.forEach(msg => {
-            // A MÁGICA AQUI: Se a conta do usuário foi apagada, o servidor ignora a mensagem e não crasha a tela!
-            if (!msg.usuarioId) return; 
-
-            const uid = msg.usuarioId._id.toString();
-            if (!conversas[uid]) {
-                conversas[uid] = {
-                    usuarioId: uid,
-                    nome: msg.usuarioId.nome,
-                    idUnico: msg.usuarioId.idUnico,
-                    fotoPerfil: msg.usuarioId.fotoPerfil || null,
-                    ultimaMensagem: msg.texto,
-                    data: msg.createdAt,
-                    naoLidas: 0
-                };
-            }
-            // Conta apenas as mensagens não lidas enviadas pelo usuário
-            if (msg.remetente === 'usuario' && !msg.lida) {
-                conversas[uid].naoLidas += 1;
-            }
+        const res = await fetch(`${URL_BASE}/api/admin/suporte/lista`, {
+            headers: { 'Authorization': `Bearer ${localStorage.getItem('br_admin_token')}` }
         });
 
-        // Ordena para que quem mandou mensagem por último fique no topo da lista
-        const listaFinal = Object.values(conversas).sort((a, b) => b.data - a.data);
-        res.json(listaFinal);
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro interno ao processar a lista de chats.' });
-    }
-});
+        // Se o servidor retornar erro (403 ou 500), avisamos na tela
+        if (!res.ok) {
+            container.innerHTML = '<div style="padding:20px; color:var(--alerta);">Erro na autenticação ou servidor.</div>';
+            return;
+        }
 
-// 2. Carregar as mensagens de uma conversa específica
-router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
-    try {
-        const usuarioId = req.params.id;
-        
-        // Assim que o Admin abre a conversa, marca todas as mensagens do usuário como Lidas (Zera a bolinha vermelha)
-        await Message.updateMany({ usuarioId, remetente: 'usuario', lida: false }, { lida: true });
-        
-        const mensagens = await Message.find({ usuarioId }).sort({ createdAt: 1 });
-        res.json(mensagens);
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao abrir a conversa.' });
-    }
-});
+        const dados = await res.json();
 
-// 3. Admin responder ao Usuário
-router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
-    try {
-        const { usuarioId, texto } = req.body;
-        if (!texto) return res.status(400).json({ erro: 'A mensagem não pode estar vazia.' });
+        // Se não houver mensagens no banco de dados
+        if (!dados || dados.length === 0) {
+            container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Nenhuma conversa ativa.</div>';
+            return;
+        }
 
-        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
-        await msg.save();
-        
-        res.json({ mensagem: 'Resposta enviada com sucesso!' });
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro ao enviar a resposta.' });
+        // Desenha a lista
+        container.innerHTML = dados.map(c => `
+            <div class="user-item" onclick="abrirConversa('${c.usuarioId}', '${c.nome}')">
+                <div class="user-avatar" style="${c.fotoPerfil ? `background-image: url(${c.fotoPerfil}); background-size: cover;` : ''}">
+                    ${!c.fotoPerfil ? c.nome.charAt(0) : ''}
+                </div>
+                <div class="user-info">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <strong>${c.nome}</strong>
+                        ${c.naoLidas > 0 ? `<span class="badge-msg" style="background:var(--magenta); color:white; padding:2px 8px; border-radius:10px; font-size:10px;">${c.naoLidas}</span>` : ''}
+                    </div>
+                    <p style="font-size:12px; color:var(--texto-med); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                        ${c.ultimaMensagem}
+                    </p>
+                </div>
+            </div>
+        `).join('');
+
+    } catch (e) {
+        container.innerHTML = '<div style="padding:20px; color:var(--alerta);">Falha de conexão com o terminal.</div>';
     }
-});
+}
+
+// Inicia a busca assim que a página abre
+window.onload = () => {
+    carregarLista();
+    // Opcional: Atualiza a lista a cada 30 segundos
+    setInterval(carregarLista, 30000);
+};
+
 module.exports = router;
