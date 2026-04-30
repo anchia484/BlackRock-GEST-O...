@@ -558,29 +558,6 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
 });
-async function carregarLista() {
-    const container = document.getElementById('lista-usuarios');
-    // Mostra que está a carregar
-    container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Buscando conversas...</div>';
-
-    try {
-        const res = await fetch(`${URL_BASE}/api/admin/suporte/lista`, {
-            headers: { 'Authorization': `Bearer ${localStorage.getItem('br_admin_token')}` }
-        });
-
-        // Se o servidor retornar erro (403 ou 500), avisamos na tela
-        if (!res.ok) {
-            container.innerHTML = '<div style="padding:20px; color:var(--alerta);">Erro na autenticação ou servidor.</div>';
-            return;
-        }
-
-        const dados = await res.json();
-
-        // Se não houver mensagens no banco de dados
-        if (!dados || dados.length === 0) {
-            container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Nenhuma conversa ativa.</div>';
-            return;
-        }
 
 // ==========================================
 // 17. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL BLINDADA)
@@ -639,5 +616,4 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Resposta enviada' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
 });
-
 module.exports = router;
