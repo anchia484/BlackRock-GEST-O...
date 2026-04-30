@@ -545,7 +545,6 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         await config.save();
         
         // Regista a ação na Caixa Negra (Logs do Sistema)
-        const SystemLog = require('./SystemLog'); // Certifique-se que o modelo existe
         await SystemLog.create({
             usuarioId: req.usuario.id,
             usuario: 'Diretoria (ADMIN)',
@@ -582,12 +581,12 @@ async function carregarLista() {
             container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Nenhuma conversa ativa.</div>';
             return;
         }
-});
+
 // ==========================================
 // 17. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL BLINDADA)
 // ==========================================
 
-// 1. Lista de conversas (Quem mandou mensagem)
+// 1. Lista de conversas
 router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
     try {
         const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
@@ -615,12 +614,11 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
 
         res.json(Object.values(conversas).sort((a, b) => b.data - a.data));
     } catch (e) { 
-        console.error("Erro no Suporte Admin:", e);
         res.status(500).json({ erro: 'Falha ao carregar lista de suporte.' }); 
     }
 });
 
-// 2. Abrir conversa e marcar como lidas
+// 2. Abrir conversa
 router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -630,7 +628,7 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
 });
 
-// 3. Responder ao usuário
+// 3. Responder
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const { usuarioId, texto } = req.body;
