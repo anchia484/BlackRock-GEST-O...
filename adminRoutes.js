@@ -5,8 +5,13 @@ const User = require('./User');
 const Transaction = require('./Transaction');
 const Feed = require('./Feed');
 const Plan = require('./Plan');
-const Requirement = require('./requirement');
-const Message = require('./Message'); // Modelo do Chat
+
+// Como a sua pasta tem 'R' maiúsculo, mantemos o 'R' maiúsculo para não dar erro:
+const Requirement = require('./Requirement'); 
+
+const Message = require('./Message');
+const System = require('./System');       // <-- ADICIONADO: Obrigatório para os Requisitos
+const SystemLog = require('./SystemLog'); // <-- ADICIONADO: Obrigatório para a Caixa Negra
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -578,34 +583,63 @@ async function carregarLista() {
             return;
         }
 
-        // Desenha a lista
-        container.innerHTML = dados.map(c => `
-            <div class="user-item" onclick="abrirConversa('${c.usuarioId}', '${c.nome}')">
-                <div class="user-avatar" style="${c.fotoPerfil ? `background-image: url(${c.fotoPerfil}); background-size: cover;` : ''}">
-                    ${!c.fotoPerfil ? c.nome.charAt(0) : ''}
-                </div>
-                <div class="user-info">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <strong>${c.nome}</strong>
-                        ${c.naoLidas > 0 ? `<span class="badge-msg" style="background:var(--magenta); color:white; padding:2px 8px; border-radius:10px; font-size:10px;">${c.naoLidas}</span>` : ''}
-                    </div>
-                    <p style="font-size:12px; color:var(--texto-med); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                        ${c.ultimaMensagem}
-                    </p>
-                </div>
-            </div>
-        `).join('');
+// ==========================================
+// 17. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL BLINDADA)
+// ==========================================
 
-    } catch (e) {
-        container.innerHTML = '<div style="padding:20px; color:var(--alerta);">Falha de conexão com o terminal.</div>';
+// 1. Lista de conversas (Quem mandou mensagem)
+router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
+    try {
+        const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
+        const conversas = {};
+
+        mensagens.forEach(msg => {
+            if (!msg.usuarioId || !msg.usuarioId._id) return; 
+
+            const uid = msg.usuarioId._id.toString();
+            if (!conversas[uid]) {
+                conversas[uid] = {
+                    usuarioId: uid,
+                    nome: msg.usuarioId.nome || 'Usuário Desconhecido',
+                    idUnico: msg.usuarioId.idUnico || '00000',
+                    fotoPerfil: msg.usuarioId.fotoPerfil || null,
+                    ultimaMensagem: msg.texto || '',
+                    data: msg.createdAt,
+                    naoLidas: 0
+                };
+            }
+            if (msg.remetente === 'usuario' && !msg.lida) {
+                conversas[uid].naoLidas++;
+            }
+        });
+
+        res.json(Object.values(conversas).sort((a, b) => b.data - a.data));
+    } catch (e) { 
+        console.error("Erro no Suporte Admin:", e);
+        res.status(500).json({ erro: 'Falha ao carregar lista de suporte.' }); 
     }
-}
+});
 
-// Inicia a busca assim que a página abre
-window.onload = () => {
-    carregarLista();
-    // Opcional: Atualiza a lista a cada 30 segundos
-    setInterval(carregarLista, 30000);
-};
+// 2. Abrir conversa e marcar como lidas
+router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await Message.updateMany({ usuarioId: id, remetente: 'usuario', lida: false }, { lida: true });
+        const chat = await Message.find({ usuarioId: id }).sort({ createdAt: 1 });
+        res.json(chat);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
+});
+
+// 3. Responder ao usuário
+router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
+    try {
+        const { usuarioId, texto } = req.body;
+        if(!texto) return res.status(400).json({ erro: 'Mensagem vazia' });
+        
+        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
+        await msg.save();
+        res.json({ mensagem: 'Resposta enviada' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
+});
 
 module.exports = router;
