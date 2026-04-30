@@ -582,7 +582,7 @@ async function carregarLista() {
             container.innerHTML = '<div style="padding:20px; color:var(--texto-med); text-align:center;">Nenhuma conversa ativa.</div>';
             return;
         }
-
+});
 // ==========================================
 // 17. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL BLINDADA)
 // ==========================================
