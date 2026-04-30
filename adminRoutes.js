@@ -455,31 +455,6 @@ router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Mural atualizado com sucesso.' });
     } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
 });
-// ==========================================
-// 14. MÓDULO DE SUPORTE SAC (WHATSAPP STYLE)
-// ==========================================
-
-// 1. Listar todas as conversas ativas (lado esquerdo)
-router.get('/suporte/conversas', auth, adminAuth, async (req, res) => {
-    try {
-        // Busca a última mensagem de cada usuário único
-        const conversas = await Message.aggregate([
-            { $sort: { createdAt: -1 } },
-            { $group: {
-                _id: "$usuarioId",
-                ultimaMensagem: { $first: "$texto" },
-                data: { $first: "$createdAt" },
-                lida: { $first: "$lida" },
-                naoLidas: { $sum: { $cond: [{ $and: [{ $eq: ["$enviadoPor", "usuario"] }, { $eq: ["$lida", false] }] }, 1, 0] } }
-            }},
-            { $lookup: { from: 'users', localField: '_id', foreignField: '_id', as: 'u' } },
-            { $unwind: '$u' },
-            { $project: { nome: '$u.nome', idUnico: '$u.idUnico', status: '$u.status', ultimaMensagem: 1, data: 1, naoLidas: 1 } },
-            { $sort: { data: -1 } }
-        ]);
-        res.json(conversas);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar lista de suporte.' }); }
-});
 
 // 2. Buscar histórico completo de um usuário
 router.get('/suporte/historico/:userId', auth, adminAuth, async (req, res) => {
@@ -491,20 +466,6 @@ router.get('/suporte/historico/:userId', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao carregar histórico.' }); }
 });
 
-// 3. Enviar resposta do ADMIN
-router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
-    try {
-        const { usuarioId, texto } = req.body;
-        const novaMsg = new Message({
-            usuarioId,
-            texto,
-            enviadoPor: 'admin',
-            lida: true
-        });
-        await novaMsg.save();
-        res.json({ mensagem: 'Resposta enviada com sucesso!' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao enviar mensagem.' }); }
-});
 // ==========================================
 // 15. CENTRAL INTELIGENTE DE NOTIFICAÇÕES
 // ==========================================
@@ -593,5 +554,73 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
 });
+// ==========================================
+// 17. ÁREA DE SUPORTE (CHAT ADMIN BLINDADO)
+// ==========================================
 
+// 1. Carregar a Lista de Usuários que mandaram mensagem
+router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
+    try {
+        const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
+        const conversas = {};
+
+        mensagens.forEach(msg => {
+            // A MÁGICA AQUI: Se a conta do usuário foi apagada, o servidor ignora a mensagem e não crasha a tela!
+            if (!msg.usuarioId) return; 
+
+            const uid = msg.usuarioId._id.toString();
+            if (!conversas[uid]) {
+                conversas[uid] = {
+                    usuarioId: uid,
+                    nome: msg.usuarioId.nome,
+                    idUnico: msg.usuarioId.idUnico,
+                    fotoPerfil: msg.usuarioId.fotoPerfil || null,
+                    ultimaMensagem: msg.texto,
+                    data: msg.createdAt,
+                    naoLidas: 0
+                };
+            }
+            // Conta apenas as mensagens não lidas enviadas pelo usuário
+            if (msg.remetente === 'usuario' && !msg.lida) {
+                conversas[uid].naoLidas += 1;
+            }
+        });
+
+        // Ordena para que quem mandou mensagem por último fique no topo da lista
+        const listaFinal = Object.values(conversas).sort((a, b) => b.data - a.data);
+        res.json(listaFinal);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro interno ao processar a lista de chats.' });
+    }
+});
+
+// 2. Carregar as mensagens de uma conversa específica
+router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const usuarioId = req.params.id;
+        
+        // Assim que o Admin abre a conversa, marca todas as mensagens do usuário como Lidas (Zera a bolinha vermelha)
+        await Message.updateMany({ usuarioId, remetente: 'usuario', lida: false }, { lida: true });
+        
+        const mensagens = await Message.find({ usuarioId }).sort({ createdAt: 1 });
+        res.json(mensagens);
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao abrir a conversa.' });
+    }
+});
+
+// 3. Admin responder ao Usuário
+router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
+    try {
+        const { usuarioId, texto } = req.body;
+        if (!texto) return res.status(400).json({ erro: 'A mensagem não pode estar vazia.' });
+
+        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
+        await msg.save();
+        
+        res.json({ mensagem: 'Resposta enviada com sucesso!' });
+    } catch (erro) {
+        res.status(500).json({ erro: 'Erro ao enviar a resposta.' });
+    }
+});
 module.exports = router;

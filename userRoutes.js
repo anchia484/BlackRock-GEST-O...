@@ -29,5 +29,20 @@ router.get('/requisitos-bonus', auth, async (req, res) => {
         res.json({ progressoGeral, isSobAnalise: false, requisitos });
     } catch (e) { res.status(500).json({ erro: 'Erro na validação.' }); }
 });
+// APLICAÇÃO:
+router.patch('/atualizar-foto', auth, async (req, res) => {
+    try {
+        const { fotoBase64 } = req.body;
+        if (!fotoBase64) return res.status(400).json({ erro: 'Nenhuma imagem enviada.' });
+
+        const usuario = await User.findByIdAndUpdate(
+            req.usuario.id, 
+            { fotoPerfil: fotoBase64 }, 
+            { new: true }
+        );
+
+        res.json({ mensagem: 'Foto de perfil atualizada!', foto: usuario.fotoPerfil });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar foto.' }); }
+});
 
 module.exports = router;

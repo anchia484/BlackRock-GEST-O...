@@ -21,6 +21,7 @@ const userSchema = new mongoose.Schema({
     carteiraPreferencial: { type: String, enum: ['M-Pesa', 'E-Mola', 'Nenhuma'], default: 'Nenhuma' },
     numeroRecebimento: { type: String, default: '' },
     nomeTitularConta: { type: String, default: '' },
+    fotoPerfil: { type: String, default: null },
 
     // NOVO: Forçar o usuário a trocar a senha se o Admin tiver resetado
     precisaTrocarSenha: { type: Boolean, default: false }
