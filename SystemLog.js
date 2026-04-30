@@ -1,13 +1,14 @@
 const mongoose = require('mongoose');
 
 const systemLogSchema = new mongoose.Schema({
-    usuarioId: { type: String, required: true },
-    usuario: { type: String, required: true },
-    acao: { type: String, required: true },
-    tipo: { type: String, required: true }, // ex: 'SISTEMA', 'SEGURANCA', 'FINANCEIRO'
+    usuarioId: { type: String, default: 'Sistema' },
+    usuario: { type: String, required: true }, // Ex: 'Diretoria (ADMIN)'
+    acao: { type: String, required: true },    // O que a pessoa fez
+    tipo: { type: String, enum: ['SISTEMA', 'SEGURANCA', 'FINANCEIRO', 'ADMIN', 'OUTRO'], default: 'OUTRO' },
     ip: { type: String, default: 'Desconhecido' },
-    status: { type: String, enum: ['sucesso', 'falha', 'alerta'], default: 'sucesso' },
-    detalhes: { type: Object, default: {} }
+    status: { type: String, enum: ['sucesso', 'falha', 'aviso'], default: 'sucesso' },
+    detalhes: { type: Object, default: {} }    // Guarda os dados extras
 }, { timestamps: true });
 
-module.exports = mongoose.model('SystemLog', systemLogSchema, 'auditoria_blackrock');
+// A mesma mágica anti-bug para garantir que não duplica
+module.exports = mongoose.models.SystemLog || mongoose.model('SystemLog', systemLogSchema, 'logs_sistema');
