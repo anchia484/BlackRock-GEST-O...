@@ -2,12 +2,22 @@ const express = require('express');
 const User = require('./User');
 const auth = require('./authMiddleware');
 const router = express.Router();
+const Notification = require('./Notification');
 
 router.get('/dashboard', auth, async (req, res) => {
-    try {
+
         const usuario = await User.findById(req.usuario.id).select('-senha');
-        res.json({ user: usuario });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard.' }); }
+        
+        // 🚀 ADICIONE ESTA LINHA AQUI:
+        const totalNotificacoes = await Notification.countDocuments({ usuarioId: req.usuario.id, lida: false });
+
+        // 🚀 ATUALIZE O JSON PARA ENVIAR O VALOR:
+        res.json({ 
+            user: usuario, 
+            unreadNotifications: totalNotificacoes 
+        });
+
+    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard' }); }
 });
 
 // NOVA ROTA: Checklist de Requisitos Automático do MongoDB
