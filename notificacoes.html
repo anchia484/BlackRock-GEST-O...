@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>BlackRock - Notificações</title>
+    <style>
+        :root {
+            --bg-canvas: #0A0C12; --bg-card: #141721; --navbar-bg: #0E1117;
+            --borda-nitida: #1A202C; --texto-high: #FFFFFF; --texto-med: #94A3B8;
+            --magenta: #EC1A7C; --violeta: #4E3FEA; --gradiente-cta: linear-gradient(135deg, #EC1A7C, #4E3FEA);
+            --verde-menta: #38E090; --cyan-neon: #00FFFF; --alerta: #FF4B4B;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', Roboto, sans-serif; }
+        
+        body { background-color: var(--bg-canvas); color: var(--texto-high); min-height: 100vh; padding-top: 70px; padding-bottom: 20px; overflow-x: hidden; }
+
+        /* HEADER FIXO */
+        .header-fixed { position: fixed; top: 0; left: 0; width: 100%; background-color: var(--bg-canvas); padding: 15px 20px; border-bottom: 1px solid var(--borda-nitida); z-index: 1000; display: flex; align-items: center; gap: 15px; }
+        .btn-voltar { background: none; border: none; color: #FFF; cursor: pointer; display: flex; align-items: center; }
+        .header-title { font-size: 18px; font-weight: 900; letter-spacing: 1px; text-transform: uppercase; background: var(--gradiente-cta); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+        .main-content { padding: 10px 15px; display: flex; flex-direction: column; gap: 10px; animation: fadeIn 0.3s ease; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+        /* ITEM DE NOTIFICAÇÃO */
+        .notif-item { background: var(--bg-card); border: 1px solid var(--borda-nitida); padding: 15px; border-radius: 12px; display: flex; gap: 15px; cursor: pointer; transition: 0.3s; position: relative; text-decoration: none; color: inherit; }
+        .notif-item.nao-lida { border-left: 4px solid var(--cyan-neon); background: rgba(0, 255, 255, 0.02); }
+        .notif-item:active { background: rgba(255,255,255,0.05); }
+
+        .notif-icon { width: 45px; height: 45px; border-radius: 50%; display: flex; justify-content: center; align-items: center; flex-shrink: 0; }
+        /* Cores por Tipo */
+        .icon-chat { background: rgba(78, 63, 234, 0.1); color: var(--violeta); }
+        .icon-transacao { background: rgba(56, 224, 144, 0.1); color: var(--verde-menta); }
+        .icon-feed { background: rgba(236, 26, 124, 0.1); color: var(--magenta); }
+        .icon-rede { background: rgba(0, 255, 255, 0.1); color: var(--cyan-neon); }
+
+        .notif-body { flex-grow: 1; }
+        .notif-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+        .notif-titulo { font-size: 13px; font-weight: 800; color: #FFF; }
+        .notif-time { font-size: 10px; color: var(--texto-med); font-weight: 600; }
+        .notif-desc { font-size: 12px; color: var(--texto-med); line-height: 1.4; }
+
+        .dot-nao-lida { width: 8px; height: 8px; background: var(--cyan-neon); border-radius: 50%; position: absolute; right: 15px; bottom: 15px; box-shadow: 0 0 8px var(--cyan-neon); }
+
+        /* ESTADO VAZIO */
+        .empty-state { text-align: center; padding: 100px 20px; display: none; flex-direction: column; align-items: center; gap: 15px; }
+        .empty-state svg { color: var(--borda-nitida); }
+        .empty-state p { color: var(--texto-med); font-size: 14px; font-weight: 600; }
+
+        /* LOADING */
+        #loading { text-align: center; padding: 20px; color: var(--cyan-neon); font-weight: 800; font-size: 12px; text-transform: uppercase; }
+    </style>
+</head>
+<body>
+    <header class="header-fixed">
+        <button class="btn-voltar" onclick="window.location.href='dashboard.html'">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+        </button>
+        <h1 class="header-title">Notificações</h1>
+    </header>
+
+    <div id="loading">Sincronizando Terminal...</div>
+
+    <div class="main-content" id="container-notificacoes">
+        </div>
+
+    <div class="empty-state" id="view-vazia">
+        <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
+        <p>Nenhuma notificação no momento</p>
+    </div>
+<script>
+        const URL_BASE = 'https://blackrock-gest-o.onrender.com';
+        
+        window.onload = async () => {
+            const token = localStorage.getItem('br_token');
+            if(!token) { window.location.href = 'login.html'; return; }
+
+            await carregarNotificacoes(token);
+        };
+
+        async function carregarNotificacoes(token) {
+            try {
+                const res = await fetch(`${URL_BASE}/api/notificacoes`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                
+                const data = await res.json();
+                document.getElementById('loading').style.display = 'none';
+
+                if(res.ok && data.notificacoes.length > 0) {
+                    renderizarNotificacoes(data.notificacoes);
+                } else {
+                    document.getElementById('view-vazia').style.display = 'flex';
+                }
+            } catch(e) {
+                console.error("Erro ao conectar ao banco de dados.");
+                document.getElementById('loading').innerText = "Erro de conexão";
+            }
+        }
+
+        function renderizarNotificacoes(lista) {
+            const container = document.getElementById('container-notificacoes');
+            
+            container.innerHTML = lista.map(n => {
+                const icone = getIcone(n.tipo);
+                const classeLida = n.status === 'lida' ? '' : 'nao-lida';
+                const dotLida = n.status === 'nao-lida' ? '<div class="dot-nao-lida"></div>' : '';
+                
+                return `
+                    <div class="notif-item ${classeLida}" onclick="processarClique('${n.id}', '${n.link}')">
+                        <div class="notif-icon ${icone.classe}">
+                            ${icone.svg}
+                        </div>
+                        <div class="notif-body">
+                            <div class="notif-header">
+                                <span class="notif-titulo">${n.titulo || n.tipo.toUpperCase()}</span>
+                                <span class="notif-time">${formatarData(n.dataCriacao)}</span>
+                            </div>
+                            <div class="notif-desc">${n.mensagem}</div>
+                        </div>
+                        ${dotLida}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function getIcone(tipo) {
+            const icones = {
+                chat: { classe: 'icon-chat', svg: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 1 1-7.6-13.5 8.38 8.38 0 0 1 3.8.9L21 3z"></path></svg>' },
+                transacao: { classe: 'icon-transacao', svg: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect><line x1="1" y1="10" x2="23" y2="10"></line></svg>' },
+                feed: { classe: 'icon-feed', svg: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 11a9 9 0 0 1 9 9"></path><path d="M4 4a16 16 0 0 1 16 16"></path><circle cx="5" cy="19" r="1"></circle></svg>' },
+                rede: { classe: 'icon-rede', svg: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>' }
+            };
+            return icones[tipo] || icones.feed;
+        }
+
+        function formatarData(dataISO) {
+            const data = new Date(dataISO);
+            const agora = new Date();
+            const diffMin = Math.floor((agora - data) / 60000);
+            
+            if(diffMin < 60) return `${diffMin}m atrás`;
+            if(diffMin < 1440) return `${Math.floor(diffMin/60)}h atrás`;
+            return data.toLocaleDateString('pt-PT');
+        }
+async function processarClique(id, link) {
+            const token = localStorage.getItem('br_token');
+            
+            // 1. Marcar como lida no servidor (sem esperar resposta para ser rápido)
+            fetch(`${URL_BASE}/api/notificacoes/${id}/ler`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            // 2. Redirecionamento Inteligente
+            // Se o link for 'chat', leva para o suporte, se for 'historico' leva para carteira, etc.
+            if(!link || link === '#') return;
+            
+            window.location.href = link;
+        }
+
+        // Simulação de atualização em tempo real (opcional com Socket.io futuramente)
+        setInterval(async () => {
+            const token = localStorage.getItem('br_token');
+            if(token) carregarNotificacoes(token);
+        }, 30000); // Atualiza a cada 30 segundos
+    </script>
+</body>
+</html>
