@@ -5,6 +5,7 @@ const User = require('./User');
 const Transaction = require('./Transaction');
 const Feed = require('./Feed');
 const Plan = require('./Plan');
+const Notification = require('./Notification');
 
 // Como a sua pasta tem 'R' maiúsculo, mantemos o 'R' maiúsculo para não dar erro:
 const Requirement = require('./Requirement'); 
@@ -165,6 +166,14 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             if (acao === 'fraude') usuario.status = 'analise';
         }
 
+             await new Notification({
+             usuarioId: idDoUsuarioAprovado,
+             titulo: 'Depósito Aprovado',
+             mensagem: 'O seu depósito de $1000 foi creditado com sucesso.',
+             tipo: 'financeiro',
+             link: 'historico.html'
+             }).save();
+
         transacao.status = acao;
         
         // Log de Auditoria invisível
@@ -275,7 +284,12 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const novaMsg = new Message({ usuarioId: req.body.usuarioId, remetente: 'admin', texto: req.body.texto, lida: false });
         await novaMsg.save();
-        res.json({ mensagem: 'Enviado.' });
+        const notif = new Notification({ usuarioId: usuarioId, titulo: 'Novo Atendimento SAC', mensagem: 'A Diretoria BlackRock respondeu à sua solicitação de suporte.', tipo: 'chat', link: 'chat.html'});
+        await notif.save();
+
+           res.json({ mensagem: 'Resposta enviada' });
+
+        
     } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 // ==========================================
