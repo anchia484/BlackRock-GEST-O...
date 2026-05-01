@@ -166,14 +166,6 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             if (acao === 'fraude') usuario.status = 'analise';
         }
 
-             await new Notification({
-             usuarioId: idDoUsuarioAprovado,
-             titulo: 'Depósito Aprovado',
-             mensagem: 'O seu depósito de $1000 foi creditado com sucesso.',
-             tipo: 'financeiro',
-             link: 'historico.html'
-             }).save();
-
         transacao.status = acao;
         
         // Log de Auditoria invisível
@@ -181,7 +173,25 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         transacao.dataProcessamento = new Date();
 
         await transacao.save();
+        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa que o dinheiro caiu na conta!
+        await new Notification({
+            usuarioId: transacao.usuarioId, // ou o ID do usuário que depositou
+            titulo: 'Depósito Aprovado',
+            mensagem: 'O seu depósito foi confirmado e o saldo já está disponível na sua conta.',
+            tipo: 'financeiro',
+            link: 'historico.html' // Redireciona para a carteira
+        }).save();
+
         await usuario.save();
+        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa que o dinheiro caiu na conta!
+        await new Notification({
+            usuarioId: transacao.usuarioId, // ou o ID do usuário que depositou
+            titulo: 'Depósito Aprovado',
+            mensagem: 'O seu depósito foi confirmado e o saldo já está disponível na sua conta.',
+            tipo: 'financeiro',
+            link: 'historico.html' // Redireciona para a carteira
+        }).save();
+
         res.json({ mensagem: `Transação ${acao} com sucesso.` });
     } catch (erro) { res.status(500).json({ erro: 'Erro crítico financeiro.' }); }
 });
@@ -280,18 +290,28 @@ router.get('/suporte/conversa/:userId', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro chat.' }); }
 });
 
+        // 3. Responder ao usuário
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
-        const novaMsg = new Message({ usuarioId: req.body.usuarioId, remetente: 'admin', texto: req.body.texto, lida: false });
-        await novaMsg.save();
-        const notif = new Notification({ usuarioId: usuarioId, titulo: 'Novo Atendimento SAC', mensagem: 'A Diretoria BlackRock respondeu à sua solicitação de suporte.', tipo: 'chat', link: 'chat.html'});
-        await notif.save();
-
-           res.json({ mensagem: 'Resposta enviada' });
-
+        const { usuarioId, texto } = req.body;
+        if(!texto) return res.status(400).json({ erro: 'Mensagem vazia' });
         
-    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
+        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
+        await msg.save();
+
+        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa o celular do usuário na hora!
+        await new Notification({
+            usuarioId: usuarioId,
+            titulo: 'Nova Mensagem SAC',
+            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.',
+            tipo: 'chat',
+            link: 'chat.html'
+        }).save();
+
+        res.json({ mensagem: 'Resposta enviada' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
 });
+
 // ==========================================
 // 10. MÓDULO DE REDE & COMISSÕES
 // ==========================================
