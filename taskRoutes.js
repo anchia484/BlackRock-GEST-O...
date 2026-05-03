@@ -25,7 +25,7 @@ router.get('/status', auth, async (req, res) => {
         const bancoFrases = [
             "Auditoria de Fundo ETF", "Balanceamento de Liquidez", "Análise de Risco Quantitativo",
             "Mapeamento de Arbitragem", "Sincronização de Bloco HFT", "Validação Institucional",
-            "Inspeção de Contratos Futuros", "Compilação de Ativos Globais", "Operação de Compra Passiva" 
+            "Inspeção de Contratos Futuros", "Compilação de Ativos Globais", "Operação de Compra Passiva",
              "Liquidação de ativos em lote concluída com sucesso.",
     "Arbitragem de alta frequência executada com margem positiva.",
     "Rebalanceamento de portfólio sincronizado no servidor principal.",
