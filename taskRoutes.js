@@ -5,11 +5,28 @@ const Transaction = require('./Transaction');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// ==========================================
-// BANCO DE 60 MENSAGENS PROFISSIONAIS (MERCADO FINANCEIRO)
-// ==========================================
-const mensagensSucesso = [
-    "Liquidação de ativos em lote concluída com sucesso.",
+// ROTA: GET /api/tarefas/status
+router.get('/status', auth, async (req, res) => {
+    try {
+        const usuario = await User.findById(req.usuario.id);
+        const plano = await Plan.findOne({ nome: usuario.planoAtivo });
+
+        if (!plano) {
+            return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0 });
+        }
+
+        // 1. CÁLCULO DE EXPIRAÇÃO
+        const dataExpiracao = new Date(usuario.dataExpiracaoPlano);
+        const dataAtual = new Date();
+        const diferencaTempo = dataExpiracao.getTime() - dataAtual.getTime();
+        const diasRestantes = Math.ceil(diferencaTempo / (1000 * 3600 * 24)); // Converte para dias inteiros
+
+        // 2. BANCO DE FRASES ÚNICAS PROFISSIONAIS
+        const bancoFrases = [
+            "Auditoria de Fundo ETF", "Balanceamento de Liquidez", "Análise de Risco Quantitativo",
+            "Mapeamento de Arbitragem", "Sincronização de Bloco HFT", "Validação Institucional",
+            "Inspeção de Contratos Futuros", "Compilação de Ativos Globais", "Operação de Compra Passiva" 
+             "Liquidação de ativos em lote concluída com sucesso.",
     "Arbitragem de alta frequência executada com margem positiva.",
     "Rebalanceamento de portfólio sincronizado no servidor principal.",
     "Validação de bloco financeiro confirmada na rede.",
@@ -69,73 +86,21 @@ const mensagensSucesso = [
     "Atualização de contratos futuros de commodities aprovada.",
     "Análise de métricas On-Chain finalizada com sucesso.",
     "Ciclo de operação do NODE concluído. Ativos garantidos."
-];
+        ];
+        // Baralha as frases para nunca se repetirem na mesma ordem
+        const frasesEmbaralhadas = bancoFrases.sort(() => 0.5 - Math.random());
 
-// ==========================================
-// ROTA DE EXECUÇÃO DA TAREFA (SIMULAÇÃO HFT)
-// ==========================================
-router.post('/executar', auth, async (req, res) => {
-    try {
-        const usuario = await User.findById(req.usuario.id);
-        if (usuario.planoAtivo === 'Nenhum') return res.status(400).json({ erro: 'Você precisa comprar um plano NODE ativo.' });
-
-        const plano = await Plan.findOne({ nome: usuario.planoAtivo });
-        if (!plano) return res.status(404).json({ erro: 'Plano não encontrado no banco de dados.' });
-        
-        // Reset Diário de Tarefas
-        const hoje = new Date().toDateString();
-        const ultimaTarefa = usuario.dataUltimaTarefa ? usuario.dataUltimaTarefa.toDateString() : '';
-        if (hoje !== ultimaTarefa) usuario.tarefasFeitasHoje = 0;
-
-        // Verifica o Limite (Que pode ser editado pelo Admin futuramente)
-        if (usuario.tarefasFeitasHoje >= plano.limiteTarefasDia) {
-            return res.status(400).json({ erro: 'Operações diárias concluídas. O mercado fechou para você hoje. Volte amanhã!' });
-        }
-
-        const ganhoPorTarefa = plano.ganhoDiario / plano.limiteTarefasDia;
-
-        // Sorteia a justificativa profissional
-        const justificativa = mensagensSucesso[Math.floor(Math.random() * mensagensSucesso.length)];
-
-        // Atualiza conta do usuário
-        usuario.saldo += ganhoPorTarefa;
-        usuario.tarefasFeitasHoje += 1;
-        usuario.dataUltimaTarefa = new Date();
-        await usuario.save();
-
-        await new Transaction({ usuarioId: usuario._id, tipo: 'ganho_tarefa', valor: ganhoPorTarefa, status: 'aprovado' }).save();
-
-        // COMISSÃO DE REDE (Nível 1 e Nível 2)
-        if (usuario.convidadoPor) {
-            const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
-            if (patrocinador) {
-                const comissaoNivel1 = ganhoPorTarefa * 0.05; 
-                patrocinador.saldo += comissaoNivel1;
-                await patrocinador.save();
-                await new Transaction({ usuarioId: patrocinador._id, tipo: 'bonus_rede', valor: comissaoNivel1, status: 'aprovado' }).save();
-
-                if (patrocinador.convidadoPor) {
-                    const patrocinadorNivel2 = await User.findOne({ meuCodigoConvite: patrocinador.convidadoPor });
-                    if (patrocinadorNivel2) {
-                        const comissaoNivel2 = ganhoPorTarefa * 0.02;
-                        patrocinadorNivel2.saldo += comissaoNivel2;
-                        await patrocinadorNivel2.save();
-                        await new Transaction({ usuarioId: patrocinadorNivel2._id, tipo: 'bonus_rede', valor: comissaoNivel2, status: 'aprovado' }).save();
-                    }
-                }
-            }
-        }
-
-        res.json({ 
-            mensagem: justificativa,
-            ganho: ganhoPorTarefa,
-            novoSaldo: usuario.saldo,
-            tarefasFeitasHoje: usuario.tarefasFeitasHoje,
-            totalTarefasPlano: plano.limiteTarefasDia
+        // Retorna o pacote completo para o Frontend Inteligente
+        res.json({
+            tarefasTotais: plano.tarefas || plano.limiteTarefasDia,
+            tarefasConcluidas: usuario.tarefasFeitasHoje,
+            ganhoDiario: plano.ganhoDiario,
+            diasRestantes: diasRestantes, // O Frontend usa isto para bloquear!
+            frases: frasesEmbaralhadas.slice(0, 20) // Envia frases suficientes
         });
 
-    } catch (erro) {
-        res.status(500).json({ erro: 'Erro no servidor', detalhes: erro.message });
+    } catch (e) {
+        res.status(500).json({ erro: 'Erro ao buscar status de trabalho.' });
     }
 });
 
