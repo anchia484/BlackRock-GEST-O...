@@ -664,4 +664,30 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Resposta enviada' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
 });
+// ==========================================
+// BUSCAR RESUMO DE PLANOS (TELA DO ADMIN)
+// ==========================================
+router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
+    try {
+        const planosDb = await Plan.find();
+        const usuariosAtivos = await User.find({ planoAtivo: { $ne: 'Nenhum' } });
+        
+        let totalInvestido = 0;
+        
+        const planosFormatados = planosDb.map(plano => {
+            const clientesNestePlano = usuariosAtivos.filter(u => u.planoAtivo === plano.nome).length;
+            const valorDoPlano = plano.valor || plano.valorEntrada || 0;
+            totalInvestido += (clientesNestePlano * valorDoPlano);
+
+            return {
+                ...plano._doc,
+                usuariosAtivos: clientesNestePlano
+            };
+        });
+
+        res.json({ planos: planosFormatados, totalInvestido: totalInvestido });
+    } catch (e) {
+        res.status(500).json({ erro: 'Erro ao carregar o resumo de planos do Admin.' });
+    }
+});
 module.exports = router;
