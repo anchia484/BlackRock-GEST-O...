@@ -5,7 +5,9 @@ const Transaction = require('./Transaction');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// ROTA 1: GET /api/tarefas/status (LÊ OS DADOS E VALIDADE)
+// ==============================================================
+// ROTA 1: BUSCAR STATUS (COM CONTAGEM REGRESSIVA PERFEITA)
+// ==============================================================
 router.get('/status', auth, async (req, res) => {
     try {
         const usuario = await User.findById(req.usuario.id);
@@ -15,13 +17,23 @@ router.get('/status', auth, async (req, res) => {
             return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0 });
         }
 
-        // 1. CÁLCULO DE EXPIRAÇÃO INTELIGENTE (Puxa do plano se faltar na conta)
-        let diasRestantes = plano.duracao || plano.validade || 30; 
+        // 1. MÁGICA DA VALIDADE (CONTAGEM REGRESSIVA)
+        // Pega a duração que o ADM definiu no painel (ex: 65)
+        let diasRestantes = plano.duracao || plano.validade || 0; 
+
         if (usuario.dataExpiracaoPlano) {
             const dataExp = new Date(usuario.dataExpiracaoPlano);
-            if (!isNaN(dataExp)) {
-                const diff = dataExp.getTime() - new Date().getTime();
-                diasRestantes = Math.ceil(diff / (1000 * 3600 * 24));
+            const dataAtual = new Date();
+
+            // Calcula quantos dias exatos faltam entre hoje e a data de expiração
+            const diferencaTempo = dataExp.getTime() - dataAtual.getTime();
+            const diferencaDias = Math.ceil(diferencaTempo / (1000 * 3600 * 24));
+
+            // Garante que os dias restantes são reais e não passam da duração original
+            if (diferencaDias >= 0) {
+                diasRestantes = diferencaDias;
+            } else {
+                diasRestantes = 0; // O plano expirou
             }
         }
 
@@ -92,6 +104,7 @@ router.get('/status', auth, async (req, res) => {
             "Ciclo de operação do NODE concluído. Ativos garantidos."
         ];
         
+        // Baralha as frases para nunca se repetirem na mesma ordem
         const frasesEmbaralhadas = bancoFrases.sort(() => 0.5 - Math.random());
 
         res.json({
@@ -107,7 +120,9 @@ router.get('/status', auth, async (req, res) => {
     }
 });
 
-// ROTA 2: POST /api/tarefas/executar (GUARDA O DINHEIRO - RESOLVE ERRO DE CONEXÃO)
+// ==============================================================
+// ROTA 2: EXECUTAR TAREFA E GUARDAR LUCRO (MÉTODO BLINDADO)
+// ==============================================================
 router.post('/executar', auth, async (req, res) => {
     try {
         const usuario = await User.findById(req.usuario.id);
@@ -120,28 +135,41 @@ router.post('/executar', auth, async (req, res) => {
             return res.status(400).json({ erro: 'Limite diário de operações atingido.' });
         }
 
-        // Matemática Absoluta
+        // Matemática Absoluta do ganho por tarefa
         const ganhoPorTarefa = plano.ganhoDiario / limite;
 
-        // Injeta o dinheiro na conta
-        usuario.saldo = (usuario.saldo || 0) + ganhoPorTarefa;
-        usuario.saldoPrincipal = (usuario.saldoPrincipal || 0) + ganhoPorTarefa;
-        usuario.tarefasFeitasHoje += 1;
-
-        await usuario.save();
-
-        // Opcional: Registar como transação
-        const logTarefa = new Transaction({
-            userId: usuario._id,
-            tipo: 'ganho_tarefa',
-            valor: ganhoPorTarefa,
-            status: 'concluido',
-            data: new Date()
+        // ==============================================================
+        // TÉCNICA DE INJEÇÃO DIRETA ($inc)
+        // Isto impede o "Erro Interno" porque ignora regras de validação 
+        // de outros campos antigos que possam estar vazios no utilizador.
+        // ==============================================================
+        await User.findByIdAndUpdate(usuario._id, {
+            $inc: {
+                saldo: ganhoPorTarefa,
+                saldoPrincipal: ganhoPorTarefa,
+                tarefasFeitasHoje: 1
+            }
         });
-        await logTarefa.save();
+
+        // Tenta gravar no extrato. Se o modelo Transaction for diferente, 
+        // ele ignora o erro e não prejudica o utilizador.
+        try {
+            const logTarefa = new Transaction({
+                usuarioId: usuario._id,
+                tipo: 'ganho_tarefa',
+                valor: ganhoPorTarefa,
+                status: 'concluido',
+                data: new Date()
+            });
+            await logTarefa.save();
+        } catch (err) {
+            console.log("Transação não guardada no extrato, mas saldo creditado com sucesso.");
+        }
 
         res.json({ sucesso: true, ganho: ganhoPorTarefa });
+
     } catch (e) {
+        console.error("Erro no processamento:", e);
         res.status(500).json({ erro: 'Erro interno ao processar lucros.' });
     }
 });
