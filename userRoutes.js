@@ -5,7 +5,7 @@ const router = express.Router();
 const Notification = require('./Notification');
 
 router.get('/dashboard', auth, async (req, res) => {
-
+   try {
         const usuario = await User.findById(req.usuario.id).select('-senha');
         
         // 🚀 ADICIONE ESTA LINHA AQUI:
@@ -17,8 +17,10 @@ router.get('/dashboard', auth, async (req, res) => {
             unreadNotifications: totalNotificacoes 
         });
 
-    } catch (erro) { res.status(500).json({ erro: 'Erro no Dashboard' }); }
-});
+    } catch (erro) { 
+        res.status(500).json({ erro: 'Erro no Dashboard' }); 
+    }
+}); // <--- ESTE É O SÍMBOLO QUE FALTA PARA O SERVIDOR LIGAR!
 
 // NOVA ROTA: Checklist de Requisitos Automático do MongoDB
 router.get('/requisitos-bonus', auth, async (req, res) => {
