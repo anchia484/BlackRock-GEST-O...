@@ -414,28 +414,42 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         const ganhoDiarioCalculado = (valInvestimento * valPercentagem) / 100;
         const ganhoTotalCalculado = ganhoDiarioCalculado * dias;
 
+        // 🚀 O SEGREDO: O PACOTE TRADUTOR QUE SALVA AS DUAS LINGUAGENS!
         const dadosPlano = {
-            nome, nivel, 
-            valor: valInvestimento, 
+            nome: nome,
+            ganhoDiario: ganhoDiarioCalculado,
+            
+            // Linguagem Nova (Painel de Admin)
+            nivel: nivel,
+            valor: valInvestimento,
             percentagem: valPercentagem,
-            ganhoDiario: ganhoDiarioCalculado, 
             duracao: dias,
             tarefas: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5)),
             ganhoTotal: ganhoTotalCalculado,
-            ativo: true
+            ativo: true,
+
+            // Linguagem Antiga (Para o sistema de Compra não quebrar)
+            estrato: nivel,
+            valorEntrada: valInvestimento,
+            duracaoDias: dias,
+            retornoTotal: ganhoTotalCalculado,
+            limiteTarefasDia: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5))
         };
 
         if (id) {
             await Plan.findByIdAndUpdate(id, dadosPlano);
-            res.json({ mensagem: 'Node atualizado com a nova percentagem.' });
+            res.json({ mensagem: 'Node atualizado com sucesso.' });
         } else {
             const existe = await Plan.findOne({ nome });
             if (existe) return res.status(400).json({ erro: 'Este nome de Node já existe.' });
             const novo = new Plan(dadosPlano);
             await novo.save();
-            res.json({ mensagem: 'Novo Node criado com matemática inteligente.' });
+            res.json({ mensagem: 'Novo Node criado e matemática sincronizada.' });
         }
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano.' }); }
+    } catch (e) { 
+        // Agora o servidor vai confessar o erro real se algo correr mal!
+        res.status(500).json({ erro: 'Erro ao salvar plano: ' + e.message }); 
+    }
 });
 // Rota para estatísticas globais de tarefas
 router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
