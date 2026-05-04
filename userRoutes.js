@@ -1,28 +1,89 @@
 const express = require('express');
 const User = require('./User');
+const Plan = require('./Plan'); // Adicionado para a barra de progresso
+const Transaction = require('./Transaction'); // Adicionado para somar os lucros
+const Notification = require('./Notification');
 const auth = require('./authMiddleware');
 const router = express.Router();
-const Notification = require('./Notification');
 
+// =====================================================================
+// ROTA DO DASHBOARD: CARREGA PERFIL, NOTIFICAÇÕES, PLANO E GANHOS
+// =====================================================================
 router.get('/dashboard', auth, async (req, res) => {
-   try {
+    try {
+        // 1. Busca os dados do utilizador
         const usuario = await User.findById(req.usuario.id).select('-senha');
-        
-        // 🚀 ADICIONE ESTA LINHA AQUI:
+        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado' });
+
+        // 2. Mantém a sua contagem de notificações!
         const totalNotificacoes = await Notification.countDocuments({ usuarioId: req.usuario.id, lida: false });
 
-        // 🚀 ATUALIZE O JSON PARA ENVIAR O VALOR:
+        // 3. Busca os detalhes do Plano Ativo (Para a barra de progresso)
+        let planoDetails = null;
+        if (usuario.planoAtivo && usuario.planoAtivo !== 'Nenhum') {
+            planoDetails = await Plan.findOne({ nome: usuario.planoAtivo });
+        }
+
+        // 4. MATEMÁTICA DO TEMPO (Filtros de datas)
+        const agora = new Date();
+        
+        const inicioHoje = new Date(agora);
+        inicioHoje.setHours(0, 0, 0, 0);
+
+        const inicioSemana = new Date(agora);
+        inicioSemana.setDate(agora.getDate() - agora.getDay());
+        inicioSemana.setHours(0, 0, 0, 0);
+
+        const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1);
+        inicioMes.setHours(0, 0, 0, 0);
+
+        // 5. MOTOR DE CÁLCULO FINANCEIRO
+        const transacoesLucro = await Transaction.find({
+            usuarioId: usuario._id,
+            tipo: { $in: ['ganho_tarefa', 'bonus', 'comissao'] },
+            status: 'concluido'
+        });
+
+        let ganhosHoje = 0;
+        let ganhosSemana = 0;
+        let ganhosMes = 0;
+        let ganhosTotal = 0;
+
+        transacoesLucro.forEach(t => {
+            const dataT = new Date(t.data || t.createdAt);
+            const valor = Number(t.valor) || 0;
+
+            ganhosTotal += valor;
+
+            if (dataT >= inicioMes) ganhosMes += valor;
+            if (dataT >= inicioSemana) ganhosSemana += valor;
+            if (dataT >= inicioHoje) ganhosHoje += valor;
+        });
+
+        // 6. ENVIA O PACOTE COMPLETO PARA O FRONTEND
         res.json({ 
             user: usuario, 
-            unreadNotifications: totalNotificacoes 
+            unreadNotifications: totalNotificacoes,
+            planoDetails: planoDetails,
+            ganhos: {
+                hoje: ganhosHoje,
+                semana: ganhosSemana,
+                mes: ganhosMes,
+                total: ganhosTotal
+            }
         });
 
     } catch (erro) { 
+        console.error("Erro no motor do Dashboard:", erro);
         res.status(500).json({ erro: 'Erro no Dashboard' }); 
     }
-}); // <--- ESTE É O SÍMBOLO QUE FALTA PARA O SERVIDOR LIGAR!
+});
 
-// NOVA ROTA: Checklist de Requisitos Automático do MongoDB
+// =====================================================================
+// ROTAS ANTIGAS INTACTAS (NÃO MEXER)
+// =====================================================================
+
+// Checklist de Requisitos Automático do MongoDB
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
         const u = await User.findById(req.usuario.id);
@@ -41,7 +102,8 @@ router.get('/requisitos-bonus', auth, async (req, res) => {
         res.json({ progressoGeral, isSobAnalise: false, requisitos });
     } catch (e) { res.status(500).json({ erro: 'Erro na validação.' }); }
 });
-// APLICAÇÃO:
+
+// Atualizar Foto
 router.patch('/atualizar-foto', auth, async (req, res) => {
     try {
         const { fotoBase64 } = req.body;
