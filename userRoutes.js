@@ -82,24 +82,34 @@ router.get('/dashboard', auth, async (req, res) => {
 // ROTAS ANTIGAS INTACTAS (NÃO MEXER)
 // =====================================================================
 
-// Checklist de Requisitos Automático do MongoDB
+// =====================================================================
+// CHECKLIST DE REQUISITOS (DINÂMICO PARA O ADM)
+// =====================================================================
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
         const u = await User.findById(req.usuario.id);
-        const convidados = await User.countDocuments({ convidadoPor: u.meuCodigoConvite, planoAtivo: { $ne: 'Nenhum' } });
         
-        // Lógica de validação automática
+        // No futuro, os requisitos virão de uma tabela "AdminSettings".
+        // Por enquanto, aplicamos a regra de ouro: Apenas Plano Ativo.
+        const temPlano = (u.planoAtivo && u.planoAtivo !== 'Nenhum');
+
         const requisitos = [
-            { status: 'concluido', titulo: 'Segurança da Conta', descricao: 'Validado pelo sistema KYC.', detalhe: 'CONTA ATIVA' },
-            { status: u.planoAtivo !== 'Nenhum' ? 'concluido' : 'falha', titulo: 'Plano Ativo', descricao: 'Possuir um NODE ativo.', detalhe: u.planoAtivo },
-            { status: convidados >= 5 ? 'concluido' : 'progresso', titulo: 'Rede de Convites', descricao: 'Mínimo 5 convidados ativos.', detalhe: `${convidados} de 5 concluídos` }
+            { 
+                status: temPlano ? 'concluido' : 'falha', 
+                titulo: 'Plano de Investimento Ativo', 
+                descricao: 'Possuir um NODE ativo para ter o direito de receber comissões de rede.', 
+                detalhe: temPlano ? `ATIVO: ${u.planoAtivo}` : 'BLOQUEADO: Ative um plano' 
+            }
         ];
 
+        // A matemática adapta-se sozinha se o ADM adicionar mais requisitos futuramente
         const concluidos = requisitos.filter(r => r.status === 'concluido').length;
         const progressoGeral = Math.round((concluidos / requisitos.length) * 100);
 
         res.json({ progressoGeral, isSobAnalise: false, requisitos });
-    } catch (e) { res.status(500).json({ erro: 'Erro na validação.' }); }
+    } catch (e) { 
+        res.status(500).json({ erro: 'Erro na validação.' }); 
+    }
 });
 
 // Atualizar Foto

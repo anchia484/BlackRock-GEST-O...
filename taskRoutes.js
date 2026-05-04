@@ -135,36 +135,68 @@ router.post('/executar', auth, async (req, res) => {
             return res.status(400).json({ erro: 'Limite diário de operações atingido.' });
         }
 
-        // Matemática Absoluta do ganho por tarefa
+        // O usuário ganha o dinheiro dele 100% intacto
         const ganhoPorTarefa = plano.ganhoDiario / limite;
 
-        // ==============================================================
-        // TÉCNICA DE INJEÇÃO DIRETA ($inc)
-        // Isto impede o "Erro Interno" porque ignora regras de validação 
-        // de outros campos antigos que possam estar vazios no utilizador.
-        // ==============================================================
+        let manterLacoEquipe = usuario.convidadoPor;
+
+        // ====================================================================
+        // BÔNUS RESIDUAL: Paga a micro-comissão ao Patrocinador
+        // ====================================================================
+        if (usuario.convidadoPor) {
+            const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
+            
+            if (patrocinador) {
+                const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
+                
+                // Só paga se o patrocinador estiver com plano ativo!
+                if (expPatrocinador > new Date()) {
+                    // Temporário: 10% (Depois será puxado do Admin)
+                    const percentualTarefa = 0.10; 
+                    const bonusPatrocinador = ganhoPorTarefa * percentualTarefa;
+
+                    // Dinheiro extra entra na conta do patrocinador
+                    await User.findByIdAndUpdate(patrocinador._id, {
+                        $inc: { saldo: bonusPatrocinador, saldoBonus: bonusPatrocinador }
+                    });
+
+                    // Recibo do bônus diário
+                    await new Transaction({
+                        usuarioId: patrocinador._id,
+                        tipo: 'bonus_rede',
+                        valor: bonusPatrocinador,
+                        status: 'concluido',
+                        data: new Date()
+                    }).save();
+                } else {
+                    // PENALIDADE: Se o patrocinador dormiu e deixou expirar, ele perde esta pessoa da equipa hoje mesmo!
+                    manterLacoEquipe = null; 
+                }
+            }
+        }
+
+        // ====================================================================
+        // Paga ao Usuário que fez a tarefa (Blindado)
+        // ====================================================================
         await User.findByIdAndUpdate(usuario._id, {
             $inc: {
                 saldo: ganhoPorTarefa,
                 saldoPrincipal: ganhoPorTarefa,
                 tarefasFeitasHoje: 1
-            }
+            },
+            $set: { convidadoPor: manterLacoEquipe } // Se o líder expirou, atualiza para null e corta o laço
         });
 
-        // Tenta gravar no extrato. Se o modelo Transaction for diferente, 
-        // ele ignora o erro e não prejudica o utilizador.
+        // Recibo do usuário
         try {
-            const logTarefa = new Transaction({
+            await new Transaction({
                 usuarioId: usuario._id,
                 tipo: 'ganho_tarefa',
                 valor: ganhoPorTarefa,
                 status: 'concluido',
                 data: new Date()
-            });
-            await logTarefa.save();
-        } catch (err) {
-            console.log("Transação não guardada no extrato, mas saldo creditado com sucesso.");
-        }
+            }).save();
+        } catch (err) {}
 
         res.json({ sucesso: true, ganho: ganhoPorTarefa });
 

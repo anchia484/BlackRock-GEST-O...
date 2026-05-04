@@ -20,7 +20,6 @@ router.post('/comprar', auth, async (req, res) => {
 
         if (!plano) return res.status(404).json({ erro: 'Plano não encontrado.' });
         
-        // 1. BLINDAGEM DE CAMPOS (Aceita os nomes criados pelo Admin Novo ou Antigo)
         const precoDoPlano = plano.valor || plano.valorEntrada || 0;
         const diasDeDuracao = plano.duracao || plano.validade || plano.duracaoDias || 0;
 
@@ -28,24 +27,63 @@ router.post('/comprar', auth, async (req, res) => {
             return res.status(400).json({ erro: 'Saldo insuficiente.' });
         }
 
-        // 2. DESCONTA O SALDO E ATIVA O PLANO
+        // 1. DESCONTA O SALDO E ATIVA O PLANO
         usuario.saldo -= precoDoPlano;
         usuario.planoAtivo = plano.nome;
         
-        // 3. A MÁGICA DA DATA DE VALIDADE
-        // Pega a data de HOJE e soma os dias exatos (ex: 65) que o Admin configurou.
         const dataExpiracao = new Date();
         dataExpiracao.setDate(dataExpiracao.getDate() + diasDeDuracao);
-        
-        // Grava na base de dados. O painel de tarefas agora vai ler isto
-        // e subtrair pela data do dia, resultando perfeitamente em 64, 63...
         usuario.dataExpiracaoPlano = dataExpiracao;
-        
-        // Opcional: Zera as tarefas feitas para o cliente começar a trabalhar no novo plano
         usuario.tarefasFeitasHoje = 0; 
+
+        // ====================================================================
+        // 2. MÁGICA DO BÔNUS DE 1º DEPÓSITO (SÓ PAGA 1 VEZ)
+        // ====================================================================
+        if (!usuario.primeiroPlanoComprado) { 
+            // Se ele tem um patrocinador
+            if (usuario.convidadoPor) {
+                const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
+                
+                if (patrocinador) {
+                    const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
+                    
+                    // Verifica se o patrocinador tem o plano ATIVO
+                    if (expPatrocinador > new Date()) {
+                        // Temporário: 10% (Depois será puxado do Admin)
+                        const percentualBonus = 0.10; 
+                        const valorBonus = precoDoPlano * percentualBonus;
+
+                        // Paga ao Patrocinador
+                        await User.findByIdAndUpdate(patrocinador._id, {
+                            $inc: { saldo: valorBonus, saldoBonus: valorBonus }
+                        });
+
+                        // Imprime o Recibo para o Patrocinador
+                        await new Transaction({
+                            usuarioId: patrocinador._id,
+                            tipo: 'bonus_rede',
+                            valor: valorBonus,
+                            status: 'concluido',
+                            data: new Date()
+                        }).save();
+                    } else {
+                        // PENALIDADE: O plano do patrocinador expirou! Corta o laço.
+                        usuario.convidadoPor = null; 
+                    }
+                }
+            }
+            // Marca que o usuário já comprou o 1º plano para nunca mais pagar este bônus
+            usuario.primeiroPlanoComprado = true; 
+        }
 
         await usuario.save();
 
+        res.json({ mensagem: `Sucesso! Node ${plano.nome} ativo por ${diasDeDuracao} dias.`, user: usuario });
+    } catch (erro) { 
+        console.error("Erro no processamento da compra:", erro);
+        res.status(500).json({ erro: 'Erro interno na compra.' }); 
+    }
+});
         // 4. POST AUTOMÁTICO NO FEED
         try {
             const postAuto = new Feed({
