@@ -40,8 +40,7 @@ router.get('/dashboard', auth, async (req, res) => {
         // 5. MOTOR DE CÁLCULO FINANCEIRO
         const transacoesLucro = await Transaction.find({
             usuarioId: usuario._id,
-            tipo: { $in: ['ganho_tarefa', 'bonus', 'comissao'] },
-            status: 'concluido'
+            tipo: { $in: ['ganho_tarefa', 'bonus_rede'] },
         });
 
         let ganhosHoje = 0;
