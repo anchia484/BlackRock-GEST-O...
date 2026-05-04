@@ -76,15 +76,13 @@ router.post('/comprar', auth, async (req, res) => {
             usuario.primeiroPlanoComprado = true; 
         }
 
+        // ... (código do bônus de rede que já lá estava) ...
+        
         await usuario.save();
 
-        res.json({ mensagem: `Sucesso! Node ${plano.nome} ativo por ${diasDeDuracao} dias.`, user: usuario });
-    } catch (erro) { 
-        console.error("Erro no processamento da compra:", erro);
-        res.status(500).json({ erro: 'Erro interno na compra.' }); 
-    }
-});
-        // 4. POST AUTOMÁTICO NO FEED
+        // ====================================================================
+        // 4. POST AUTOMÁTICO NO FEED (AGORA DENTRO DO LUGAR CERTO)
+        // ====================================================================
         try {
             const postAuto = new Feed({
                 titulo: 'Novo Investidor!',
@@ -97,11 +95,14 @@ router.post('/comprar', auth, async (req, res) => {
             console.log("Feed não atualizado, mas compra feita com sucesso.");
         }
 
+        // A RESPOSTA FINAL DE SUCESSO FICA AQUI, ANTES DE FECHAR O 'TRY'
         res.json({ mensagem: `Sucesso! Node ${plano.nome} ativo por ${diasDeDuracao} dias.`, user: usuario });
+
     } catch (erro) { 
+        // ESTE É O CATCH GERAL QUE FECHA A ROTA INTEIRA
         console.error("Erro no processamento da compra:", erro);
         res.status(500).json({ erro: 'Erro interno na compra.' }); 
     }
-});
+}); // FIM DA ROTA DE COMPRA
 
 module.exports = router;
