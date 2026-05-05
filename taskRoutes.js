@@ -6,7 +6,7 @@ const auth = require('./authMiddleware');
 const router = express.Router();
 
 // ==============================================================
-// ROTA 1: BUSCAR STATUS (COM CONTAGEM REGRESSIVA PERFEITA)
+// ROTA 1: BUSCAR STATUS (COM CONTAGEM REGRESSIVA E RESET 00H)
 // ==============================================================
 router.get('/status', auth, async (req, res) => {
     try {
@@ -17,26 +17,38 @@ router.get('/status', auth, async (req, res) => {
             return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0 });
         }
 
+        // ==========================================================
+        // 🚀 MÁGICA DO RESET PREGUIÇOSO DAS 00h00
+        // ==========================================================
+        const dataAtual = new Date();
+        const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
+
+        // Verifica se a última tarefa foi feita no mesmo dia, mês e ano de hoje
+        const isMesmoDia = dataAtual.getDate() === dataUltima.getDate() &&
+                           dataAtual.getMonth() === dataUltima.getMonth() &&
+                           dataAtual.getFullYear() === dataUltima.getFullYear();
+
+        // Se NÃO for o mesmo dia (virou meia-noite) e ele tiver tarefas feitas, ZERA TUDO!
+        if (!isMesmoDia && usuario.tarefasFeitasHoje > 0) {
+            usuario.tarefasFeitasHoje = 0;
+            await User.findByIdAndUpdate(usuario._id, { tarefasFeitasHoje: 0 });
+        }
+        // ==========================================================
+
         // 1. MÁGICA DA VALIDADE (CONTAGEM REGRESSIVA)
-        // Pega a duração que o ADM definiu no painel (ex: 65)
         let diasRestantes = plano.duracao || plano.validade || 0; 
 
         if (usuario.dataExpiracaoPlano) {
             const dataExp = new Date(usuario.dataExpiracaoPlano);
-            const dataAtual = new Date();
-
-            // Calcula quantos dias exatos faltam entre hoje e a data de expiração
             const diferencaTempo = dataExp.getTime() - dataAtual.getTime();
             const diferencaDias = Math.ceil(diferencaTempo / (1000 * 3600 * 24));
 
-            // Garante que os dias restantes são reais e não passam da duração original
             if (diferencaDias >= 0) {
                 diasRestantes = diferencaDias;
             } else {
                 diasRestantes = 0; // O plano expirou
             }
         }
-
         // 2. BANCO DE FRASES ÚNICAS PROFISSIONAIS
         const bancoFrases = [
             "Auditoria de Fundo ETF", "Balanceamento de Liquidez", "Análise de Risco Quantitativo",
@@ -187,7 +199,10 @@ router.post('/executar', auth, async (req, res) => {
                 saldoPrincipal: ganhoPorTarefa,
                 tarefasFeitasHoje: 1
             },
-            $set: { convidadoPor: manterLacoEquipe } // Se o líder expirou, atualiza para null e corta o laço
+            $set: { 
+                convidadoPor: manterLacoEquipe,
+                dataUltimaTarefa: new Date() // <-- NOVO: Grava a hora exata da tarefa para o reset das 00h funcionar!
+            } 
         });
 
         // Recibo do usuário
