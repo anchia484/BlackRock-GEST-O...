@@ -2,7 +2,8 @@ const mongoose = require('mongoose');
 
 const systemSchema = new mongoose.Schema({
     saqueAbre: String, saqueFecha: String, saqueLimite: Number, saqueAtivo: Boolean, saqueTaxa: Number,
-    bonusRede: Number, // <-- ESTA É A MÁGICA NOVA QUE ADICIONAMOS
+    bonusRede: Number, // <-- ESTA É A MÁGICA NOVA QUE ADICIONAMOS 
+    depositoMsg: String, saqueInformacoes: String, // <-- AQUI ESTÃO ELAS!
     mpesaNum: String, mpesaNome: String, emolaNum: String, emolaNome: String, depositoMsg: String,
     whatsappLink: String, telegramLink: String, avisoGlobal: String, modoManutencao: Boolean,
     sobreNos: String, regrasPlataforma: String, faq: String, termosCondicoes: String,
