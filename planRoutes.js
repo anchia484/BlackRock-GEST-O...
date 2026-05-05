@@ -35,11 +35,18 @@ router.post('/comprar', auth, async (req, res) => {
         dataExpiracao.setDate(dataExpiracao.getDate() + diasDeDuracao);
         usuario.dataExpiracaoPlano = dataExpiracao;
         usuario.tarefasFeitasHoje = 0; 
-
-        // ====================================================================
+// ====================================================================
         // 2. MÁGICA DO BÔNUS DE 1º DEPÓSITO (SÓ PAGA 1 VEZ)
         // ====================================================================
-       // Verifica se o patrocinador tem o plano ATIVO
+        if (!usuario.primeiroPlanoComprado) { 
+            // Se ele tem um patrocinador
+            if (usuario.convidadoPor) {
+                const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
+                
+                if (patrocinador) {
+                    const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
+                    
+                    // Verifica se o patrocinador tem o plano ATIVO
                     if (expPatrocinador > new Date()) {
                         
                         // MÁGICA: Vai buscar o bónus à Diretoria!
@@ -66,8 +73,8 @@ router.post('/comprar', auth, async (req, res) => {
                             data: new Date()
                         }).save();
                     } else {
-                        // PENALIDADE: O plano do patrocinador expirou! Ele perde o convidado.
-                        usuario.convidadoPor = null;
+                        // PENALIDADE: O plano do patrocinador expirou! Corta o laço.
+                        usuario.convidadoPor = null; 
                     }
                 }
             }
