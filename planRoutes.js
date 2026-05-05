@@ -39,18 +39,17 @@ router.post('/comprar', auth, async (req, res) => {
         // ====================================================================
         // 2. MÁGICA DO BÔNUS DE 1º DEPÓSITO (SÓ PAGA 1 VEZ)
         // ====================================================================
-        if (!usuario.primeiroPlanoComprado) { 
-            // Se ele tem um patrocinador
-            if (usuario.convidadoPor) {
-                const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
-                
-                if (patrocinador) {
-                    const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
-                    
-                    // Verifica se o patrocinador tem o plano ATIVO
+       // Verifica se o patrocinador tem o plano ATIVO
                     if (expPatrocinador > new Date()) {
-                        // Temporário: 10% (Depois será puxado do Admin)
-                        const percentualBonus = 0.10; 
+                        
+                        // MÁGICA: Vai buscar o bónus à Diretoria!
+                        const System = require('./System');
+                        const config = await System.findOne();
+                        
+                        let percentualBonus = 0.10; // Valor de segurança (10%)
+                        if (config && config.bonusRede !== undefined) {
+                            percentualBonus = config.bonusRede / 100;
+                        }
                         const valorBonus = precoDoPlano * percentualBonus;
 
                         // Paga ao Patrocinador
@@ -67,8 +66,8 @@ router.post('/comprar', auth, async (req, res) => {
                             data: new Date()
                         }).save();
                     } else {
-                        // PENALIDADE: O plano do patrocinador expirou! Corta o laço.
-                        usuario.convidadoPor = null; 
+                        // PENALIDADE: O plano do patrocinador expirou! Ele perde o convidado.
+                        usuario.convidadoPor = null;
                     }
                 }
             }

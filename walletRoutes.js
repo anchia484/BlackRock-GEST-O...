@@ -70,42 +70,59 @@ router.post('/deposito', auth, async (req, res) => {
 });
 
 // ==========================================
-// 2. ROTA DE SAQUE (LEVANTAMENTO) CORRIGIDA
+// ROTA DE SAQUE BLINDADA COM O ADMIN
 // ==========================================
+const System = require('./System'); // Assegure-se que esta linha está no topo do arquivo junto com as outras importações
+
 router.post('/saque', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
-        
-        // CORREÇÃO AQUI: Os nomes agora batem certo com o saque.html
         const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao } = req.body;
 
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
+        // 1. Verifica Senha de Segurança
         const senhaCorreta = await verificarSenhaSegura(senhaConfirmacao, usuario.senha);
         if (!senhaCorreta) return res.status(400).json({ erro: 'A senha de segurança está incorreta.' });
 
-        if (usuario.saldo !== undefined) {
-            if (usuario.saldo < Number(valor)) {
-                return res.status(400).json({ erro: 'Saldo insuficiente para este levantamento.' });
-            }
-            usuario.saldo -= Number(valor);
-            await usuario.save();
+        // 2. MOTOR LIGADO: Consulta o Banco de Dados da Diretoria
+        const config = await System.findOne();
+        if (!config) return res.status(500).json({ erro: 'O sistema financeiro está offline.' });
+        
+        if (config.saqueAtivo === false) {
+            return res.status(403).json({ erro: 'Os levantamentos foram temporariamente suspensos pela Diretoria.' });
         }
 
+        const valorSaqueBruto = Number(valor);
+        const limiteMinimo = config.saqueLimite || 200; // Caso o Admin apague, o mínimo é 200
+
+        if (valorSaqueBruto < limiteMinimo) {
+            return res.status(400).json({ erro: `O valor mínimo para levantamento é de ${limiteMinimo} MZN.` });
+        }
+
+        if (usuario.saldo < valorSaqueBruto) {
+            return res.status(400).json({ erro: 'Saldo insuficiente para este levantamento.' });
+        }
+
+        // 3. Aplica o débito na conta do usuário (Débita o BRUTO, a taxa fica pro sistema)
+        usuario.saldo -= valorSaqueBruto;
+        await usuario.save();
+
+        // 4. Salva o histórico para o Admin aprovar
         const novaTransacao = new Transaction({
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome || 'Usuário',         
             idUnicoUsuario: usuario.idUnico || 0,   
             tipo: 'saque',
-            valor: Number(valor),
+            valor: valorSaqueBruto, // Fica registado o valor que ele pediu
             status: 'pendente',
-            numeroContaDestino: numeroContaDestino, // AGORA GRAVA CORRETAMENTE
-            nomeContaDestino: nomeContaDestino      // AGORA GRAVA CORRETAMENTE
+            numeroContaDestino: numeroContaDestino, 
+            nomeContaDestino: nomeContaDestino      
         });
 
         await novaTransacao.save();
-        res.json({ mensagem: 'Levantamento registado com sucesso!' });
+        res.json({ mensagem: 'Levantamento registado com sucesso e enviado para análise!' });
 
     } catch (erro) {
         console.error("Erro interno no Saque:", erro);

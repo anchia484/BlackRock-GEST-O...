@@ -140,8 +140,8 @@ router.post('/executar', auth, async (req, res) => {
 
         let manterLacoEquipe = usuario.convidadoPor;
 
-        // ====================================================================
-        // BÔNUS RESIDUAL: Paga a micro-comissão ao Patrocinador
+       // ====================================================================
+        // BÔNUS RESIDUAL LIGADO AO ADMIN
         // ====================================================================
         if (usuario.convidadoPor) {
             const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
@@ -149,18 +149,22 @@ router.post('/executar', auth, async (req, res) => {
             if (patrocinador) {
                 const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
                 
-                // Só paga se o patrocinador estiver com plano ativo!
                 if (expPatrocinador > new Date()) {
-                    // Temporário: 10% (Depois será puxado do Admin)
-                    const percentualTarefa = 0.10; 
+                    // MÁGICA: Vai buscar o bónus à Diretoria!
+                    const System = require('./System');
+                    const config = await System.findOne();
+                    
+                    let percentualTarefa = 0.10; // Valor de segurança (10%)
+                    if (config && config.bonusRede !== undefined) {
+                        percentualTarefa = config.bonusRede / 100;
+                    }
+
                     const bonusPatrocinador = ganhoPorTarefa * percentualTarefa;
 
-                    // Dinheiro extra entra na conta do patrocinador
                     await User.findByIdAndUpdate(patrocinador._id, {
                         $inc: { saldo: bonusPatrocinador, saldoBonus: bonusPatrocinador }
                     });
 
-                    // Recibo do bônus diário
                     await new Transaction({
                         usuarioId: patrocinador._id,
                         tipo: 'bonus_rede',
@@ -169,7 +173,6 @@ router.post('/executar', auth, async (req, res) => {
                         data: new Date()
                     }).save();
                 } else {
-                    // PENALIDADE: Se o patrocinador dormiu e deixou expirar, ele perde esta pessoa da equipa hoje mesmo!
                     manterLacoEquipe = null; 
                 }
             }

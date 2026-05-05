@@ -5,6 +5,7 @@ const Transaction = require('./Transaction'); // Adicionado para somar os lucros
 const Notification = require('./Notification');
 const auth = require('./authMiddleware');
 const router = express.Router();
+const Requirement = require('./Requirement');
 
 // =====================================================================
 // ROTA DO DASHBOARD: CARREGA PERFIL, NOTIFICAÇÕES, PLANO E GANHOS
@@ -83,32 +84,63 @@ router.get('/dashboard', auth, async (req, res) => {
 // =====================================================================
 
 // =====================================================================
-// CHECKLIST DE REQUISITOS (DINÂMICO PARA O ADM)
+// CHECKLIST DE REQUISITOS (LIGADO AO PAINEL ADMIN)
 // =====================================================================
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
         const u = await User.findById(req.usuario.id);
         
-        // No futuro, os requisitos virão de uma tabela "AdminSettings".
-        // Por enquanto, aplicamos a regra de ouro: Apenas Plano Ativo.
-        const temPlano = (u.planoAtivo && u.planoAtivo !== 'Nenhum');
+        // 1. Vai buscar as ordens à Diretoria
+        const regrasAdmin = await Requirement.find();
+        
+        let requisitosFormados = [];
 
-        const requisitos = [
-            { 
+        // 2. Se o Admin ainda não criou regras, usa a regra de Ouro Padrão
+        if (regrasAdmin.length === 0) {
+            const temPlano = (u.planoAtivo && u.planoAtivo !== 'Nenhum');
+            requisitosFormados.push({
                 status: temPlano ? 'concluido' : 'falha', 
                 titulo: 'Plano de Investimento Ativo', 
                 descricao: 'Possuir um NODE ativo para ter o direito de receber comissões de rede.', 
                 detalhe: temPlano ? `ATIVO: ${u.planoAtivo}` : 'BLOQUEADO: Ative um plano' 
+            });
+        } else {
+            // 3. Se houver regras, analisa uma a uma
+            for (let regra of regrasAdmin) {
+                let status = 'falha';
+                let detalhe = 'Pendente';
+
+                if (regra.tipoValidacao === 'plano_ativo') {
+                    const temPlano = (u.planoAtivo && u.planoAtivo !== 'Nenhum');
+                    status = temPlano ? 'concluido' : 'falha';
+                    detalhe = temPlano ? `ATIVO: ${u.planoAtivo}` : 'Requer ativação de pacote';
+                } 
+                else if (regra.tipoValidacao === 'saldo_minimo') {
+                    const valorNecessario = Number(regra.valorNecessario) || 0;
+                    status = (u.saldo >= valorNecessario) ? 'concluido' : 'falha';
+                    detalhe = `Saldo Atual: ${u.saldo} / Necessário: ${valorNecessario}`;
+                }
+                else {
+                    detalhe = "Análise Manual";
+                }
+
+                requisitosFormados.push({
+                    status: status,
+                    titulo: regra.titulo,
+                    descricao: regra.descricao,
+                    detalhe: detalhe
+                });
             }
-        ];
+        }
 
-        // A matemática adapta-se sozinha se o ADM adicionar mais requisitos futuramente
-        const concluidos = requisitos.filter(r => r.status === 'concluido').length;
-        const progressoGeral = Math.round((concluidos / requisitos.length) * 100);
+        const concluidos = requisitosFormados.filter(r => r.status === 'concluido').length;
+        const progressoGeral = requisitosFormados.length > 0 
+            ? Math.round((concluidos / requisitosFormados.length) * 100) 
+            : 100;
 
-        res.json({ progressoGeral, isSobAnalise: false, requisitos });
+        res.json({ progressoGeral, isSobAnalise: false, requisitos: requisitosFormados });
     } catch (e) { 
-        res.status(500).json({ erro: 'Erro na validação.' }); 
+        res.status(500).json({ erro: 'Erro ao processar as regras da Diretoria.' }); 
     }
 });
 
