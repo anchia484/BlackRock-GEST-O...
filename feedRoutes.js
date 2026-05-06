@@ -1,5 +1,6 @@
 const express = require('express');
 const Feed = require('./Feed');
+const auth = require('./authMiddleware'); // <-- ESTA É A LINHA QUE FALTAVA PARA RESOLVER O ERRO
 const router = express.Router();
 
 // 1. BUSCAR FEED (Fixados primeiro, depois por data)
@@ -38,6 +39,5 @@ router.post('/:id/like', auth, async (req, res) => {
         res.status(500).json({ erro: 'Erro ao processar reação.' });
     }
 });
-
 
 module.exports = router;
