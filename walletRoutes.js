@@ -3,45 +3,51 @@ const router = express.Router();
 const auth = require('./authMiddleware'); 
 const User = require('./User'); 
 const Transaction = require('./Transaction');
+const System = require('./System');
 
-// MÁGICA DE SEGURANÇA: Entende senhas criptografadas e textos normais
+// ===============================
+// SEGURANÇA DE SENHA
+// ===============================
 async function verificarSenhaSegura(senhaDigitada, senhaGuardada) {
     if (!senhaDigitada || !senhaGuardada) return false;
     const digitada = senhaDigitada.trim();
+
     if (digitada === senhaGuardada) return true; 
+
     try {
         const bcrypt = require('bcryptjs');
         return await bcrypt.compare(digitada, senhaGuardada);
-    } catch(e) {
+    } catch {
         try {
             const bcrypt = require('bcrypt');
             return await bcrypt.compare(digitada, senhaGuardada);
-        } catch(e2) {
+        } catch {
             return false;
         }
     }
 }
 
-// FUNÇÃO SEGURA PARA PEGAR O ID
+// ===============================
+// PEGAR ID
+// ===============================
 function getUserId(req) {
     if (typeof req.usuario === 'string') return req.usuario;
     return req.usuario.id || req.usuario._id || req.usuario.userId;
 }
 
-// ==========================================
-// 1. ROTA DE DEPÓSITO
-// ==========================================
+// ===============================
+// DEPÓSITO
+// ===============================
 router.post('/deposito', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
         const { canal, numeroOrigem, valor, idTransacaoBancaria, comprovanteBase64, senhaConfirmacao } = req.body;
 
-        // .select('+senha') OBRIGA o banco a ler a senha, mesmo que esteja oculta
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
         const senhaCorreta = await verificarSenhaSegura(senhaConfirmacao, usuario.senha);
-        if (!senhaCorreta) return res.status(400).json({ erro: 'A senha de segurança está incorreta.' });
+        if (!senhaCorreta) return res.status(400).json({ erro: 'Senha incorreta.' });
 
         let operadoraFormatada = null;
         if (canal === 'M-PESA' || canal === 'M-Pesa') operadoraFormatada = 'M-Pesa';
@@ -49,31 +55,29 @@ router.post('/deposito', auth, async (req, res) => {
 
         const novaTransacao = new Transaction({
             usuarioId: usuario._id,
-            nomeUsuario: usuario.nome || 'Usuário',         
-            idUnicoUsuario: usuario.idUnico || 0,   
+            nomeUsuario: usuario.nome,
+            idUnicoUsuario: usuario.idUnico,
             tipo: 'deposito',
             valor: Number(valor),
             status: 'pendente',
-            operadora: operadoraFormatada,       
-            numeroTransferencia: numeroOrigem,   
-            idTransacaoBancaria: idTransacaoBancaria,
-            comprovanteBase64: comprovanteBase64
+            operadora: operadoraFormatada,
+            numeroTransferencia: numeroOrigem,
+            idTransacaoBancaria,
+            comprovanteBase64
         });
 
         await novaTransacao.save();
         res.json({ mensagem: 'Depósito registado com sucesso!' });
 
     } catch (erro) {
-        console.error("Erro interno no Depósito:", erro);
-        res.status(500).json({ erro: 'Erro interno ao salvar no banco de dados.' });
+        console.error("Erro depósito:", erro);
+        res.status(500).json({ erro: 'Erro interno.' });
     }
 });
 
-// ==========================================
-// ROTA DE SAQUE BLINDADA COM O ADMIN
-// ==========================================
-const System = require('./System'); // Assegure-se que esta linha está no topo do arquivo junto com as outras importações
-
+// ===============================
+// SAQUE
+// ===============================
 router.post('/saque', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
@@ -82,66 +86,71 @@ router.post('/saque', auth, async (req, res) => {
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
-        // 1. Verifica Senha de Segurança
         const senhaCorreta = await verificarSenhaSegura(senhaConfirmacao, usuario.senha);
-        if (!senhaCorreta) return res.status(400).json({ erro: 'A senha de segurança está incorreta.' });
+        if (!senhaCorreta) return res.status(400).json({ erro: 'Senha incorreta.' });
 
-        // 2. MOTOR LIGADO: Consulta o Banco de Dados da Diretoria
         const config = await System.findOne();
-        if (!config) return res.status(500).json({ erro: 'O sistema financeiro está offline.' });
-        
+        if (!config) return res.status(500).json({ erro: 'Sistema offline.' });
+
         if (config.saqueAtivo === false) {
-            return res.status(403).json({ erro: 'Os levantamentos foram temporariamente suspensos pela Diretoria.' });
+            return res.status(403).json({ erro: 'Saques desativados.' });
         }
 
         const valorSaqueBruto = Number(valor);
-        const limiteMinimo = config.saqueLimite || 200; // Caso o Admin apague, o mínimo é 200
+        const limiteMinimo = config.saqueLimite || 200;
 
         if (valorSaqueBruto < limiteMinimo) {
-            return res.status(400).json({ erro: `O valor mínimo para levantamento é de ${limiteMinimo} MZN.` });
+            return res.status(400).json({ erro: `Mínimo: ${limiteMinimo} MZN` });
         }
 
         if (usuario.saldo < valorSaqueBruto) {
-            return res.status(400).json({ erro: 'Saldo insuficiente para este levantamento.' });
+            return res.status(400).json({ erro: 'Saldo insuficiente.' });
         }
 
-        // 3. Aplica o débito na conta do usuário (Débita o BRUTO, a taxa fica pro sistema)
+        // Desconta saldo
         usuario.saldo -= valorSaqueBruto;
         await usuario.save();
-// 1. Puxar a taxa atual do Sistema (Se não encontrar, usa 10%)
-        const taxaAtual = config && config.saqueTaxa !== undefined ? config.saqueTaxa : 10;
 
-        // 2. Fazer os cálculos reais
-        const valorTaxa = (valor * taxaAtual) / 100;
-        const valorLiquido = valor - valorTaxa;
+        const taxaAtual = config.saqueTaxa ?? 10;
+        const valorTaxa = (valorSaqueBruto * taxaAtual) / 100;
+        const valorLiquido = valorSaqueBruto - valorTaxa;
 
-        // 3. Salvar TUDO na Base de Dados de forma permanente
         const novaTransacao = new Transaction({
-            usuarioId: req.usuario.id,
+            usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
             tipo: 'saque',
-            valor: valor, // Valor Bruto (Ex: 1000)
-            taxaAplicada: taxaAtual, // Congela a % (Ex: 10)
-            valorTaxa: valorTaxa, // Congela o valor cortado (Ex: 100)
-            valorLiquido: valorLiquido, // Congela o que ele vai receber (Ex: 900)
-            metodoSaque: metodo,
-            numeroContaDestino: numeroTelefone,
+            valor: valorSaqueBruto,
+            taxaAplicada: taxaAtual,
+            valorTaxa,
+            valorLiquido,
+            metodoSaque: 'M-Pesa/E-Mola',
+            numeroContaDestino,
+            nomeContaDestino,
             status: 'pendente'
         });
-        
+
         await novaTransacao.save();
-// ==========================================
-// 3. ROTA PARA LER HISTÓRICO REAL
-// ==========================================
+
+        res.json({ mensagem: 'Pedido de saque enviado com sucesso!' });
+
+    } catch (erro) {
+        console.error("Erro saque:", erro);
+        res.status(500).json({ erro: 'Erro interno.' });
+    }
+});
+
+// ===============================
+// HISTÓRICO
+// ===============================
 router.get('/historico', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
         const historico = await Transaction.find({ usuarioId: userId }).sort({ createdAt: -1 });
         res.json(historico);
     } catch (erro) {
-        console.error("Erro ao puxar histórico:", erro);
-        res.status(500).json({ erro: 'Erro ao carregar o histórico.' });
+        console.error("Erro histórico:", erro);
+        res.status(500).json({ erro: 'Erro ao carregar histórico.' });
     }
 });
 
