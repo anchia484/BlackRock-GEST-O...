@@ -254,10 +254,38 @@ router.delete('/requisitos/apagar/:id', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 6. FEED E COMUNICAÇÃO OFICIAL
+// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
 // ==========================================
-router.post('/criar-post', auth, adminAuth, async (req, res) => {
-    try { const novoPost = new Feed(req.body); await novoPost.save(); res.json({ mensagem: 'Post publicado!' }); } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
+
+// Criar Post (Manual)
+router.post('/feed/criar', auth, adminAuth, async (req, res) => {
+    try {
+        // Agora o backend sabe receber a midiaBase64 e o titulo que vêm do HTML!
+        const { titulo, tipo, texto, isFixado, midiaBase64, formatoMidia } = req.body;
+        
+        let imgUrl = '';
+        let vidUrl = '';
+        
+        if (formatoMidia === 'imagem') imgUrl = midiaBase64;
+        if (formatoMidia === 'video') vidUrl = midiaBase64;
+
+        const novoPost = new Feed({
+            titulo: titulo,
+            tipo: tipo, 
+            texto: texto, 
+            imagemUrl: imgUrl, 
+            videoUrl: vidUrl, 
+            isFixado: isFixado,
+            autor: 'Administração',
+            isAutomatico: false
+        });
+        
+        await novoPost.save();
+        res.json({ mensagem: 'Publicação lançada no mural!' });
+    } catch (e) { 
+        console.error("Erro no Feed:", e);
+        res.status(500).json({ erro: 'O arquivo é muito pesado ou faltam dados.' }); 
+    }
 });
 
 // ==========================================

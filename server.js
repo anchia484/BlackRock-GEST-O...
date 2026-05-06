@@ -6,9 +6,9 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// Limite para envio de fotos/comprovantes
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// Aumenta o limite para aceitar imagens grandes no Feed e Depósitos
+app.use(express.json({ limit: '70mb' }));
+app.use(express.urlencoded({ limit: '70mb', extended: true }));
 
 // Importando as rotas
 const authRoutes = require('./auth');
