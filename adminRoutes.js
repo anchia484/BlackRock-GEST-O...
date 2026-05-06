@@ -466,23 +466,34 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
 // ==========================================
 // 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
 // ==========================================
-// Criar Post (Manual) - VERSÃO CORRIGIDA E BLINDADA
+// ==========================================
+// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
+// ==========================================
+
+// 1. Buscar todos os posts com estatísticas (Admin)
+router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
+    try {
+        const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 });
+        res.json(posts);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar mural.' }); }
+});
+
+// 2. Criar Post (Manual) - VERSÃO CORRIGIDA E BLINDADA
 router.post('/feed/criar', auth, adminAuth, async (req, res) => {
     try {
         const { titulo, tipo, texto, isFixado, midiaBase64, formatoMidia } = req.body;
         
-        // 1. O Tradutor de Categorias (Transforma do HTML para a Base de Dados)
+        // O Tradutor de Categorias
         let tipoFormatado = 'comunicado';
         if (tipo === 'Prova de Pagamento') tipoFormatado = 'prova_pagamento';
         if (tipo === 'Atualização') tipoFormatado = 'comunicado'; 
         if (tipo === 'Promoção') tipoFormatado = 'promocao';
 
-        // 2. O Construtor Perfeito (As chaves batem 100% com o Feed.js)
         const novoPost = new Feed({
             titulo: titulo || 'Aviso da Diretoria',
             tipo: tipoFormatado, 
-            mensagem: texto,            // Corrigido de 'texto' para 'mensagem'
-            midiaBase64: midiaBase64,   // Passando a foto diretamente para o local correto
+            mensagem: texto,            
+            midiaBase64: midiaBase64,   
             formatoMidia: formatoMidia || 'nenhum',
             isFixado: isFixado,
             autor: 'Administração',
@@ -493,11 +504,27 @@ router.post('/feed/criar', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Publicação lançada no mural com sucesso!' });
     } catch (e) { 
         console.error("Erro no Feed:", e);
-        // O servidor agora confessa o erro exato na tela se algo falhar!
         res.status(500).json({ erro: 'Falha no servidor: ' + e.message }); 
     }
 });
 
+// 3. Ações de Gestão (Fixar / Apagar)
+router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
+    try {
+        const { postId, acao } = req.body;
+        if(acao === 'fixar') {
+            // Busca o post para inverter o estado (se está fixo, desfixa. Se não, fixa)
+            const post = await Feed.findById(postId);
+            if(post) {
+                await Feed.findByIdAndUpdate(postId, { isFixado: !post.isFixado });
+            }
+        }
+        if(acao === 'apagar') {
+            await Feed.findByIdAndDelete(postId);
+        }
+        res.json({ mensagem: 'Mural atualizado com sucesso.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
+});
 // ==========================================
 // 15. CENTRAL INTELIGENTE DE NOTIFICAÇÕES
 // ==========================================
