@@ -8,7 +8,8 @@ const feedSchema = new mongoose.Schema({
     autor: { type: String, default: 'Diretoria BlackRock' },
     tipo: { type: String, enum: ['comunicado', 'prova_pagamento', 'voto', 'promocao', 'automatico'], default: 'comunicado' },
     isFixado: { type: Boolean, default: false }, // Para posts no topo
-    reacoes: { type: Number, default: 0 }, // ❤️ Likes
+    curtidas: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }], // Guarda quem curtiu
+    reacoes: { type: Number, default: 0 }, // Mantido por compatibilidade
     dadosExtras: { // Para posts automáticos (ex: "Usuário ID 123")
         idUsuario: String,
         valor: Number,
