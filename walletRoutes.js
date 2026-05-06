@@ -109,7 +109,6 @@ router.post('/saque', auth, async (req, res) => {
         usuario.saldo -= valorSaqueBruto;
         await usuario.save();
 // 1. Puxar a taxa atual do Sistema (Se não encontrar, usa 10%)
-        const config = await System.findOne(); 
         const taxaAtual = config && config.saqueTaxa !== undefined ? config.saqueTaxa : 10;
 
         // 2. Fazer os cálculos reais
