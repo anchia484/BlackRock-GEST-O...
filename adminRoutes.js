@@ -254,41 +254,6 @@ router.delete('/requisitos/apagar/:id', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
-// ==========================================
-
-// Criar Post (Manual)
-router.post('/feed/criar', auth, adminAuth, async (req, res) => {
-    try {
-        // Agora o backend sabe receber a midiaBase64 e o titulo que vêm do HTML!
-        const { titulo, tipo, texto, isFixado, midiaBase64, formatoMidia } = req.body;
-        
-        let imgUrl = '';
-        let vidUrl = '';
-        
-        if (formatoMidia === 'imagem') imgUrl = midiaBase64;
-        if (formatoMidia === 'video') vidUrl = midiaBase64;
-
-        const novoPost = new Feed({
-            titulo: titulo,
-            tipo: tipo, 
-            texto: texto, 
-            imagemUrl: imgUrl, 
-            videoUrl: vidUrl, 
-            isFixado: isFixado,
-            autor: 'Administração',
-            isAutomatico: false
-        });
-        
-        await novoPost.save();
-        res.json({ mensagem: 'Publicação lançada no mural!' });
-    } catch (e) { 
-        console.error("Erro no Feed:", e);
-        res.status(500).json({ erro: 'O arquivo é muito pesado ou faltam dados.' }); 
-    }
-});
-
-// ==========================================
 // 7. MÓDULO CHAT SAC (ESTILO FACEBOOK)
 // ==========================================
 router.get('/suporte/conversas', auth, adminAuth, async (req, res) => {
@@ -501,50 +466,36 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
 // ==========================================
 // 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
 // ==========================================
-
-// Buscar todos os posts com estatísticas (Admin)
-router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
-    try {
-        const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 });
-        res.json(posts);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar mural.' }); }
-} );
-
-// Criar Post (Manual)
+// Criar Post (Manual) - VERSÃO CORRIGIDA E BLINDADA
 router.post('/feed/criar', auth, adminAuth, async (req, res) => {
     try {
-        const { tipo, texto, imagemUrl, videoUrl, isFixado } = req.body;
+        const { titulo, tipo, texto, isFixado, midiaBase64, formatoMidia } = req.body;
+        
+        // 1. O Tradutor de Categorias (Transforma do HTML para a Base de Dados)
+        let tipoFormatado = 'comunicado';
+        if (tipo === 'Prova de Pagamento') tipoFormatado = 'prova_pagamento';
+        if (tipo === 'Atualização') tipoFormatado = 'comunicado'; 
+        if (tipo === 'Promoção') tipoFormatado = 'promocao';
+
+        // 2. O Construtor Perfeito (As chaves batem 100% com o Feed.js)
         const novoPost = new Feed({
-            tipo, texto, imagemUrl, videoUrl, isFixado,
+            titulo: titulo || 'Aviso da Diretoria',
+            tipo: tipoFormatado, 
+            mensagem: texto,            // Corrigido de 'texto' para 'mensagem'
+            midiaBase64: midiaBase64,   // Passando a foto diretamente para o local correto
+            formatoMidia: formatoMidia || 'nenhum',
+            isFixado: isFixado,
             autor: 'Administração',
             isAutomatico: false
         });
+        
         await novoPost.save();
-        res.json({ mensagem: 'Publicação lançada no mural!' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao publicar.' }); }
-});
-
-// Ações de Gestão (Fixar / Apagar)
-router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
-    try {
-        const { postId, acao } = req.body;
-        if(acao === 'fixar') {
-            await Feed.updateMany({}, { isFixado: false }); // Desfixa outros
-            await Feed.findByIdAndUpdate(postId, { isFixado: true });
-        }
-        if(acao === 'apagar') await Feed.findByIdAndDelete(postId);
-        res.json({ mensagem: 'Mural atualizado com sucesso.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
-});
-
-// 2. Buscar histórico completo de um usuário
-router.get('/suporte/historico/:userId', auth, adminAuth, async (req, res) => {
-    try {
-        const mensagens = await Message.find({ usuarioId: req.params.userId }).sort({ createdAt: 1 });
-        // Marcar todas como lidas ao abrir o chat
-        await Message.updateMany({ usuarioId: req.params.userId, enviadoPor: 'usuario' }, { lida: true });
-        res.json(mensagens);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar histórico.' }); }
+        res.json({ mensagem: 'Publicação lançada no mural com sucesso!' });
+    } catch (e) { 
+        console.error("Erro no Feed:", e);
+        // O servidor agora confessa o erro exato na tela se algo falhar!
+        res.status(500).json({ erro: 'Falha no servidor: ' + e.message }); 
+    }
 });
 
 // ==========================================
