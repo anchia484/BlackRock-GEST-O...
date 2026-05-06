@@ -108,28 +108,30 @@ router.post('/saque', auth, async (req, res) => {
         // 3. Aplica o débito na conta do usuário (Débita o BRUTO, a taxa fica pro sistema)
         usuario.saldo -= valorSaqueBruto;
         await usuario.save();
+// 1. Puxar a taxa atual do Sistema (Se não encontrar, usa 10%)
+        const config = await System.findOne(); 
+        const taxaAtual = config && config.saqueTaxa !== undefined ? config.saqueTaxa : 10;
 
-        // 4. Salva o histórico para o Admin aprovar
+        // 2. Fazer os cálculos reais
+        const valorTaxa = (valor * taxaAtual) / 100;
+        const valorLiquido = valor - valorTaxa;
+
+        // 3. Salvar TUDO na Base de Dados de forma permanente
         const novaTransacao = new Transaction({
-            usuarioId: usuario._id,
-            nomeUsuario: usuario.nome || 'Usuário',         
-            idUnicoUsuario: usuario.idUnico || 0,   
+            usuarioId: req.usuario.id,
+            nomeUsuario: usuario.nome,
+            idUnicoUsuario: usuario.idUnico,
             tipo: 'saque',
-            valor: valorSaqueBruto, // Fica registado o valor que ele pediu
-            status: 'pendente',
-            numeroContaDestino: numeroContaDestino, 
-            nomeContaDestino: nomeContaDestino      
+            valor: valor, // Valor Bruto (Ex: 1000)
+            taxaAplicada: taxaAtual, // Congela a % (Ex: 10)
+            valorTaxa: valorTaxa, // Congela o valor cortado (Ex: 100)
+            valorLiquido: valorLiquido, // Congela o que ele vai receber (Ex: 900)
+            metodoSaque: metodo,
+            numeroContaDestino: numeroTelefone,
+            status: 'pendente'
         });
-
+        
         await novaTransacao.save();
-        res.json({ mensagem: 'Levantamento registado com sucesso e enviado para análise!' });
-
-    } catch (erro) {
-        console.error("Erro interno no Saque:", erro);
-        res.status(500).json({ erro: 'Erro interno ao processar levantamento.' });
-    }
-});
-
 // ==========================================
 // 3. ROTA PARA LER HISTÓRICO REAL
 // ==========================================
