@@ -139,63 +139,69 @@ router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
     } catch (erro) { res.status(500).json({ erro: 'Erro ao buscar financeiro.' }); }
 });
 
+// ==========================================
+// PROCESSAR TRANSAÇÕES (COM NOTIFICAÇÕES REAIS)
+// ==========================================
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
-        // Agora recebe o motivoRejeicao
         const { transacaoId, acao, motivoRejeicao } = req.body;
         const transacao = await Transaction.findById(transacaoId);
-        if (!transacao || transacao.status !== 'pendente') return res.status(400).json({ erro: 'Transação não encontrada ou já processada.' });
+        if (!transacao) return res.status(404).json({ erro: 'Transação não encontrada.' });
+        if (transacao.status !== 'pendente') return res.status(400).json({ erro: 'Esta transação já foi processada.' });
 
         const usuario = await User.findById(transacao.usuarioId);
-        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
+        if (!usuario) return res.status(404).json({ erro: 'Usuário dono da transação não encontrado.' });
+
+        transacao.status = acao;
+
+        let tituloNotif = '';
+        let mensagemNotif = '';
 
         if (acao === 'aprovado') {
             if (transacao.tipo === 'deposito') {
                 usuario.saldo += transacao.valor;
+                tituloNotif = 'Depósito Aprovado ✅';
+                mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
             } else if (transacao.tipo === 'saque') {
-                const post = new Feed({ titulo: 'Saque Pago! 💸', mensagem: `O investidor ID: ${usuario.idUnico} recebeu ${transacao.valor} MZN.`, tipo: 'prova_pagamento', autor: 'Sistema Financeiro' });
-                await post.save();
+                // O saldo já foi descontado no momento do pedido. Aqui só confirmamos o envio.
+                tituloNotif = 'Levantamento Aprovado 💸';
+                mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
             }
-        } else if (acao === 'rejeitado' || acao === 'fraude') {
-            // Se for saque e for rejeitado, devolve o dinheiro ao saldo do usuário
-            if (transacao.tipo === 'saque') usuario.saldo += transacao.valor;
-            
-            // Grava o motivo para o histórico
-            if (motivoRejeicao) transacao.motivoRejeicao = motivoRejeicao;
-            
-            if (acao === 'fraude') usuario.status = 'analise';
+        } 
+        else if (acao === 'rejeitado') {
+            transacao.motivoRejeicao = motivoRejeicao || 'Não cumpre os requisitos do sistema.';
+            if (transacao.tipo === 'saque') {
+                // Devolve o dinheiro à conta se o saque for rejeitado
+                usuario.saldo += transacao.valor; 
+                tituloNotif = 'Levantamento Rejeitado ❌';
+                mensagemNotif = `O seu levantamento foi rejeitado e o valor foi devolvido ao saldo. Motivo: ${transacao.motivoRejeicao}`;
+            } else if (transacao.tipo === 'deposito') {
+                tituloNotif = 'Depósito Rejeitado ❌';
+                mensagemNotif = `O seu depósito foi rejeitado. Motivo: ${transacao.motivoRejeicao}`;
+            }
         }
 
-        transacao.status = acao;
-        
-        // Log de Auditoria invisível
-        transacao.processadoPor = req.usuario.id;
-        transacao.dataProcessamento = new Date();
-
+        // SALVA TUDO: Transação, Saldo do Usuário e Dispara a Notificação Exclusiva
         await transacao.save();
-        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa que o dinheiro caiu na conta!
-        await new Notification({
-            usuarioId: transacao.usuarioId, // ou o ID do usuário que depositou
-            titulo: 'Depósito Aprovado',
-            mensagem: 'O seu depósito foi confirmado e o saldo já está disponível na sua conta.',
-            tipo: 'financeiro',
-            link: 'historico.html' // Redireciona para a carteira
-        }).save();
-
         await usuario.save();
-        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa que o dinheiro caiu na conta!
-        await new Notification({
-            usuarioId: transacao.usuarioId, // ou o ID do usuário que depositou
-            titulo: 'Depósito Aprovado',
-            mensagem: 'O seu depósito foi confirmado e o saldo já está disponível na sua conta.',
-            tipo: 'financeiro',
-            link: 'historico.html' // Redireciona para a carteira
-        }).save();
 
-        res.json({ mensagem: `Transação ${acao} com sucesso.` });
-    } catch (erro) { res.status(500).json({ erro: 'Erro crítico financeiro.' }); }
+        if (tituloNotif !== '') {
+            const novaNotificacao = new Notification({
+                usuarioId: usuario._id,
+                titulo: tituloNotif,
+                mensagem: mensagemNotif,
+                tipo: 'financeiro',
+                lida: false
+            });
+            await novaNotificacao.save();
+        }
+
+        res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
+    } catch (e) {
+        console.error("Erro ao processar transação:", e);
+        res.status(500).json({ erro: 'Falha no servidor ao processar.' });
+    }
 });
-
 // ==========================================
 // 4. GESTÃO DE USUÁRIOS
 // ==========================================

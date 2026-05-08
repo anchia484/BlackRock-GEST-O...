@@ -4,6 +4,7 @@ const auth = require('./authMiddleware');
 const User = require('./User'); 
 const Transaction = require('./Transaction');
 const System = require('./System');
+const Notification = require('./Notification');
 
 // ===============================
 // SEGURANÇA DE SENHA
@@ -28,7 +29,7 @@ async function verificarSenhaSegura(senhaDigitada, senhaGuardada) {
 }
 
 // ===============================
-// PEGAR ID
+// PEGAR ID (GARANTE ISOLAMENTO)
 // ===============================
 function getUserId(req) {
     if (typeof req.usuario === 'string') return req.usuario;
@@ -36,7 +37,7 @@ function getUserId(req) {
 }
 
 // ===============================
-// DEPÓSITO
+// DEPÓSITO (VERSÃO BLINDADA)
 // ===============================
 router.post('/deposito', auth, async (req, res) => {
     try {
@@ -57,6 +58,7 @@ router.post('/deposito', auth, async (req, res) => {
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
+            telefoneUsuario: usuario.telefone, // GRAVA TELEFONE PARA O ADMIN
             tipo: 'deposito',
             valor: Number(valor),
             status: 'pendente',
@@ -67,7 +69,20 @@ router.post('/deposito', auth, async (req, res) => {
         });
 
         await novaTransacao.save();
-        res.json({ mensagem: 'Depósito registado com sucesso!' });
+
+        // 🚀 NOTIFICAÇÃO DE DEPÓSITO CORRETA AQUI!
+        try {
+            const novaNotif = new Notification({
+                usuarioId: usuario._id,
+                titulo: 'Depósito em Análise ⏳',
+                mensagem: `O seu pedido de depósito no valor de ${Number(valor).toLocaleString('pt-MZ')} MZN foi recebido e está aguardando auditoria.`,
+                tipo: 'financeiro',
+                lida: false
+            });
+            await novaNotif.save();
+        } catch(errNotif) { console.error("Erro ao gerar notif depósito:", errNotif); }
+
+        res.json({ mensagem: 'Depósito enviado para análise com sucesso!' });
 
     } catch (erro) {
         console.error("Erro depósito:", erro);
@@ -76,12 +91,12 @@ router.post('/deposito', auth, async (req, res) => {
 });
 
 // ===============================
-// SAQUE
+// SAQUE (TAXA DINÂMICA E REAL)
 // ===============================
 router.post('/saque', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
-        const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao } = req.body;
+        const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao, operadora } = req.body;
 
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
@@ -93,24 +108,25 @@ router.post('/saque', auth, async (req, res) => {
         if (!config) return res.status(500).json({ erro: 'Sistema offline.' });
 
         if (config.saqueAtivo === false) {
-            return res.status(403).json({ erro: 'Saques desativados.' });
+            return res.status(403).json({ erro: 'Saques desativados temporariamente.' });
         }
 
         const valorSaqueBruto = Number(valor);
         const limiteMinimo = config.saqueLimite || 200;
 
         if (valorSaqueBruto < limiteMinimo) {
-            return res.status(400).json({ erro: `Mínimo: ${limiteMinimo} MZN` });
+            return res.status(400).json({ erro: `Mínimo para saque: ${limiteMinimo} MZN` });
         }
 
         if (usuario.saldo < valorSaqueBruto) {
             return res.status(400).json({ erro: 'Saldo insuficiente.' });
         }
 
-        // Desconta saldo
+        // DESCONTA SALDO IMEDIATAMENTE
         usuario.saldo -= valorSaqueBruto;
         await usuario.save();
 
+        // PUXA A TAXA REAL DO SISTEMA (CONGELAMENTO)
         const taxaAtual = config.saqueTaxa ?? 10;
         const valorTaxa = (valorSaqueBruto * taxaAtual) / 100;
         const valorLiquido = valorSaqueBruto - valorTaxa;
@@ -119,12 +135,13 @@ router.post('/saque', auth, async (req, res) => {
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
+            telefoneUsuario: usuario.telefone, // GRAVA TELEFONE PARA O ADMIN
             tipo: 'saque',
-            valor: valorSaqueBruto,
-            taxaAplicada: taxaAtual,
-            valorTaxa,
-            valorLiquido,
-            metodoSaque: 'M-Pesa/E-Mola',
+            valor: valorSaqueBruto, // Valor Bruto
+            taxaAplicada: taxaAtual, // Congela a taxa atual do sistema
+            valorTaxa: valorTaxa, // Valor descontado
+            valorLiquido: valorLiquido, // O que será recebido
+            operadora: operadora || 'M-Pesa', 
             numeroContaDestino,
             nomeContaDestino,
             status: 'pendente'
@@ -132,25 +149,38 @@ router.post('/saque', auth, async (req, res) => {
 
         await novaTransacao.save();
 
-        res.json({ mensagem: 'Pedido de saque enviado com sucesso!' });
+        // 🚀 NOTIFICAÇÃO DE SAQUE CORRETA AQUI!
+        try {
+            const novaNotif = new Notification({
+                usuarioId: usuario._id,
+                titulo: 'Levantamento Solicitado ⏳',
+                mensagem: `O seu pedido de levantamento de ${valorSaqueBruto.toLocaleString('pt-MZ')} MZN foi enviado. Em breve o valor líquido será creditado na sua conta.`,
+                tipo: 'financeiro',
+                lida: false
+            });
+            await novaNotif.save();
+        } catch(errNotif) { console.error("Erro ao gerar notif saque:", errNotif); }
+
+        res.json({ mensagem: 'Pedido de levantamento enviado com sucesso!' });
 
     } catch (erro) {
         console.error("Erro saque:", erro);
-        res.status(500).json({ erro: 'Erro interno.' });
+        res.status(500).json({ erro: 'Erro interno no processamento do saque.' });
     }
 });
 
 // ===============================
-// HISTÓRICO
+// HISTÓRICO (ISOLAMENTO TOTAL)
 // ===============================
 router.get('/historico', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
+        // Filtra apenas as transações do usuário logado
         const historico = await Transaction.find({ usuarioId: userId }).sort({ createdAt: -1 });
         res.json(historico);
     } catch (erro) {
         console.error("Erro histórico:", erro);
-        res.status(500).json({ erro: 'Erro ao carregar histórico.' });
+        res.status(500).json({ erro: 'Erro ao carregar o seu histórico individual.' });
     }
 });
 
