@@ -37,7 +37,7 @@ function getUserId(req) {
 }
 
 // ===============================
-// DEPÓSITO (VERSÃO BLINDADA)
+// DEPÓSITO (VERSÃO BLINDADA E CORRIGIDA)
 // ===============================
 router.post('/deposito', auth, async (req, res) => {
     try {
@@ -58,19 +58,22 @@ router.post('/deposito', auth, async (req, res) => {
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
-            telefoneUsuario: usuario.telefone, // GRAVA TELEFONE PARA O ADMIN
+            telefoneUsuario: usuario.telefone,
             tipo: 'deposito',
             valor: Number(valor),
             status: 'pendente',
             operadora: operadoraFormatada,
-            numeroTransferencia: numeroOrigem,
+            
+            // 🎯 AQUI ESTÁ A CORREÇÃO: Agora o nome bate perfeitamente com a Base de Dados!
+            numeroOrigem: numeroOrigem, 
+            
             idTransacaoBancaria,
             comprovanteBase64
         });
 
         await novaTransacao.save();
 
-        // 🚀 NOTIFICAÇÃO DE DEPÓSITO CORRETA AQUI!
+        // NOTIFICAÇÃO DE DEPÓSITO
         try {
             const novaNotif = new Notification({
                 usuarioId: usuario._id,
@@ -135,12 +138,12 @@ router.post('/saque', auth, async (req, res) => {
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
-            telefoneUsuario: usuario.telefone, // GRAVA TELEFONE PARA O ADMIN
+            telefoneUsuario: usuario.telefone,
             tipo: 'saque',
-            valor: valorSaqueBruto, // Valor Bruto
-            taxaAplicada: taxaAtual, // Congela a taxa atual do sistema
-            valorTaxa: valorTaxa, // Valor descontado
-            valorLiquido: valorLiquido, // O que será recebido
+            valor: valorSaqueBruto,
+            taxaAplicada: taxaAtual, 
+            valorTaxa: valorTaxa, 
+            valorLiquido: valorLiquido, 
             operadora: operadora || 'M-Pesa', 
             numeroContaDestino,
             nomeContaDestino,
@@ -149,7 +152,7 @@ router.post('/saque', auth, async (req, res) => {
 
         await novaTransacao.save();
 
-        // 🚀 NOTIFICAÇÃO DE SAQUE CORRETA AQUI!
+        // NOTIFICAÇÃO DE SAQUE 
         try {
             const novaNotif = new Notification({
                 usuarioId: usuario._id,
