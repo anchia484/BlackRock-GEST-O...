@@ -15,7 +15,6 @@ router.get('/', async (req, res) => {
 router.post('/comprar', auth, async (req, res) => {
     try {
         const { planoId } = req.body;
-        const usuario = await User.findById(req.usuario.id);
         const plano = await Plan.findById(planoId);
 
         if (!plano) return res.status(404).json({ erro: 'Plano não encontrado.' });
@@ -23,19 +22,30 @@ router.post('/comprar', auth, async (req, res) => {
         const precoDoPlano = plano.valor || plano.valorEntrada || 0;
         const diasDeDuracao = plano.duracao || plano.validade || plano.duracaoDias || 0;
 
-        if (usuario.saldo < precoDoPlano) {
-            return res.status(400).json({ erro: 'Saldo insuficiente.' });
-        }
-
-        // 1. DESCONTA O SALDO E ATIVA O PLANO
-        usuario.saldo -= precoDoPlano;
-        usuario.planoAtivo = plano.nome;
-        
         const dataExpiracao = new Date();
         dataExpiracao.setDate(dataExpiracao.getDate() + diasDeDuracao);
-        usuario.dataExpiracaoPlano = dataExpiracao;
-        usuario.tarefasFeitasHoje = 0; 
-// ====================================================================
+
+        // ====================================================================
+        // 1. DESCONTO E ATIVAÇÃO ATÔMICA (Bloqueia concorrência/Duplo gasto)
+        // ====================================================================
+        const usuario = await User.findOneAndUpdate(
+            { _id: req.usuario.id, saldo: { $gte: precoDoPlano } },
+            { 
+                $inc: { saldo: -precoDoPlano },
+                $set: { 
+                    planoAtivo: plano.nome,
+                    dataExpiracaoPlano: dataExpiracao,
+                    tarefasFeitasHoje: 0
+                }
+            },
+            { new: true }
+        );
+
+        if (!usuario) {
+            return res.status(400).json({ erro: 'Saldo insuficiente ou requisição simultânea bloqueada por segurança.' });
+        }
+
+        // ====================================================================
         // 2. MÁGICA DO BÔNUS DE 1º DEPÓSITO (SÓ PAGA 1 VEZ)
         // ====================================================================
         if (!usuario.primeiroPlanoComprado) { 
@@ -65,6 +75,7 @@ router.post('/comprar', auth, async (req, res) => {
                         });
 
                         // Imprime o Recibo para o Patrocinador
+                        const Transaction = require('./Transaction');
                         await new Transaction({
                             usuarioId: patrocinador._id,
                             tipo: 'bonus_rede',
@@ -82,8 +93,7 @@ router.post('/comprar', auth, async (req, res) => {
             usuario.primeiroPlanoComprado = true; 
         }
 
-        // ... (código do bônus de rede que já lá estava) ...
-        
+        // Salva as alterações da penalidade ou da marcação de primeiro plano
         await usuario.save();
 
         // ====================================================================

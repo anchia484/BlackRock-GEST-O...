@@ -19,7 +19,28 @@ router.post('/register', async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash(senha, salt);
-        const idGerado = Math.floor(10000 + Math.random() * 90000);
+        
+        // ====================================================================
+        // MOTOR DE GERAÇÃO DE ID ÚNICO (Prevenção de Colisão no Banco de Dados)
+        // ====================================================================
+        let idGerado;
+        let isUnique = false;
+        let tentativas = 0;
+
+        while (!isUnique) {
+            // Se o sistema encher e tiver muitas colisões, expande automaticamente para 6 dígitos
+            if (tentativas > 10) {
+                idGerado = Math.floor(100000 + Math.random() * 900000); 
+            } else {
+                idGerado = Math.floor(10000 + Math.random() * 90000); 
+            }
+
+            const checkId = await User.findOne({ idUnico: idGerado }).select('_id').lean();
+            if (!checkId) {
+                isUnique = true;
+            }
+            tentativas++;
+        }
 
         const novoUsuario = new User({
             nome, telefone, senha: senhaCriptografada,
@@ -29,7 +50,10 @@ router.post('/register', async (req, res) => {
 
         await novoUsuario.save();
         res.status(201).json({ mensagem: 'Conta criada!', idUnico: idGerado });
-    } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
+    } catch (erro) { 
+        console.error("Erro no registro:", erro);
+        res.status(500).json({ erro: 'Erro no servidor' }); 
+    }
 });
 
 // LOGIN

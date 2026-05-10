@@ -6,18 +6,15 @@ const Transaction = require('./Transaction');
 const Feed = require('./Feed');
 const Plan = require('./Plan');
 const Notification = require('./Notification');
-
-// Como a sua pasta tem 'R' maiúsculo, mantemos o 'R' maiúsculo para não dar erro:
 const Requirement = require('./Requirement'); 
-
 const Message = require('./Message');
-const System = require('./System');       // <-- ADICIONADO: Obrigatório para os Requisitos
-const SystemLog = require('./SystemLog'); // <-- ADICIONADO: Obrigatório para a Caixa Negra
+const System = require('./System');       
+const SystemLog = require('./SystemLog'); 
 const auth = require('./authMiddleware');
 const router = express.Router();
 
 // ==========================================
-// 0. LOGIN DA DIRETORIA
+// 0. LOGIN E MIDDLEWARE DA DIRETORIA
 // ==========================================
 router.post('/login', async (req, res) => {
     try {
@@ -47,24 +44,19 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
         const aprovadas = transacoes.filter(t => t.status === 'aprovado');
         const pendentes = transacoes.filter(t => t.status === 'pendente');
 
-        // Totais
         const totalDepositado = aprovadas.filter(t => t.tipo === 'deposito').reduce((a, b) => a + b.valor, 0);
         const totalSacado = aprovadas.filter(t => t.tipo === 'saque').reduce((a, b) => a + b.valor, 0);
         
-        // Dados de Hoje
         const startOfDay = new Date();
         startOfDay.setHours(0,0,0,0);
         const depositosHoje = aprovadas.filter(t => t.tipo === 'deposito' && new Date(t.createdAt) >= startOfDay).reduce((a, b) => a + b.valor, 0);
         
-        // Usuários
         const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
         const novosUsuariosHoje = await User.countDocuments({ createdAt: { $gte: startOfDay } });
 
-        // Pendências (Alertas)
         const depPendentes = pendentes.filter(t => t.tipo === 'deposito').length;
         const saqPendentes = pendentes.filter(t => t.tipo === 'saque').length;
 
-        // Logs de Atividade (Últimas 50 para o filtro do Frontend)
         const logs = aprovadas.sort((a,b) => b.createdAt - a.createdAt).slice(0, 50).map(u => ({
             id: u._id,
             usuario: u.nomeUsuario || "ID: " + u.idUnicoUsuario,
@@ -73,7 +65,6 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
             data: u.createdAt
         }));
 
-        // Dados para o Gráfico (Últimos 7 dias)
         const chartData = { labels: [], depositos: [], saques: [] };
         for(let i=6; i>=0; i--) {
             const d = new Date(); d.setDate(d.getDate() - i);
@@ -88,36 +79,26 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
 
         res.json({ 
             totalDepositado, totalSacado, caixaLiquido: totalDepositado - totalSacado, 
-            lucroSistema: totalDepositado - totalSacado, // Pode ajustar a fórmula do lucro depois se tiver taxas
+            lucroSistema: totalDepositado - totalSacado, 
             usuariosAtivos, novosUsuariosHoje, 
             depPendentes, saqPendentes,
-            variacaoDep: depositosHoje, // Para mostrar "X MZN hoje"
+            variacaoDep: depositosHoje, 
             ultimasAcoes: logs,
             chartData
         });
     } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço.' }); }
 });
 
-// ==========================================
-// 1.5. BOTÃO DE DESTRUIÇÃO (RESET PARA LANÇAMENTO)
-// ==========================================
 router.post('/reset-sistema', auth, adminAuth, async (req, res) => {
     try {
-        // Apaga todos os registos financeiros e chats, mas mantém os Planos e Requisitos
         await Transaction.deleteMany({});
         await Message.deleteMany({});
         await Feed.deleteMany({});
-        
-        // Zera o saldo e planos de todos os usuários (exceto os Diretores)
         await User.updateMany({ isAdmin: { $ne: true } }, { $set: { saldo: 0, planoAtivo: 'Nenhum' } });
-
         res.json({ mensagem: 'SISTEMA LIMPO! Plataforma pronta para o Lançamento Oficial.' });
     } catch (e) { res.status(500).json({ erro: 'Falha ao resetar o sistema.' }); }
 });
 
-// ==========================================
-// 2. ALERTAS GLOBAIS (AS BOLINHAS VERMELHAS)
-// ==========================================
 router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
     try {
         const pendentesFin = await Transaction.countDocuments({ status: 'pendente', tipo: { $in: ['deposito', 'saque'] } });
@@ -129,19 +110,16 @@ router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
 // ==========================================
 // 3. MÓDULO FINANCEIRO CORPORATIVO (CAIXA FORTE)
 // ==========================================
-
-// Buscar TODAS as transações (Pendentes, Aprovados, Rejeitados para o Histórico)
 router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
     try {
-        // Busca tudo ordenado da mais recente para a mais antiga
-        const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } }).sort({ createdAt: -1 });
+        // 🚀 CORREÇÃO DE ESCALABILIDADE: Limite de 300 registos mais recentes!
+        const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } })
+                                            .sort({ createdAt: -1 })
+                                            .limit(300);
         res.json(transacoes);
     } catch (erro) { res.status(500).json({ erro: 'Erro ao buscar financeiro.' }); }
 });
 
-// ==========================================
-// PROCESSAR TRANSAÇÕES (COM NOTIFICAÇÕES REAIS)
-// ==========================================
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
         const { transacaoId, acao, motivoRejeicao } = req.body;
@@ -153,9 +131,7 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         if (!usuario) return res.status(404).json({ erro: 'Usuário dono da transação não encontrado.' });
 
         transacao.status = acao;
-
-        let tituloNotif = '';
-        let mensagemNotif = '';
+        let tituloNotif = ''; let mensagemNotif = '';
 
         if (acao === 'aprovado') {
             if (transacao.tipo === 'deposito') {
@@ -163,7 +139,6 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
                 tituloNotif = 'Depósito Aprovado ✅';
                 mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
             } else if (transacao.tipo === 'saque') {
-                // O saldo já foi descontado no momento do pedido. Aqui só confirmamos o envio.
                 tituloNotif = 'Levantamento Aprovado 💸';
                 mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
             }
@@ -171,7 +146,6 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         else if (acao === 'rejeitado') {
             transacao.motivoRejeicao = motivoRejeicao || 'Não cumpre os requisitos do sistema.';
             if (transacao.tipo === 'saque') {
-                // Devolve o dinheiro à conta se o saque for rejeitado
                 usuario.saldo += transacao.valor; 
                 tituloNotif = 'Levantamento Rejeitado ❌';
                 mensagemNotif = `O seu levantamento foi rejeitado e o valor foi devolvido ao saldo. Motivo: ${transacao.motivoRejeicao}`;
@@ -181,27 +155,17 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             }
         }
 
-        // SALVA TUDO: Transação, Saldo do Usuário e Dispara a Notificação Exclusiva
         await transacao.save();
         await usuario.save();
 
         if (tituloNotif !== '') {
-            const novaNotificacao = new Notification({
-                usuarioId: usuario._id,
-                titulo: tituloNotif,
-                mensagem: mensagemNotif,
-                tipo: 'financeiro',
-                lida: false
-            });
-            await novaNotificacao.save();
+            await new Notification({ usuarioId: usuario._id, titulo: tituloNotif, mensagem: mensagemNotif, tipo: 'financeiro', lida: false }).save();
         }
 
         res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
-    } catch (e) {
-        console.error("Erro ao processar transação:", e);
-        res.status(500).json({ erro: 'Falha no servidor ao processar.' });
-    }
+    } catch (e) { res.status(500).json({ erro: 'Falha no servidor ao processar.' }); }
 });
+
 // ==========================================
 // 4. GESTÃO DE USUÁRIOS
 // ==========================================
@@ -231,6 +195,7 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
         if (acao === 'senha_reset') {
             const salt = await bcrypt.genSalt(10);
             u.senha = await bcrypt.hash(novaSenha, salt);
+            u.precisaTrocarSenha = true;
         }
         await u.save();
         res.json({ mensagem: 'Ação executada.' });
@@ -238,7 +203,7 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 5. CONFIGURAÇÕES: PLANOS E REQUISITOS
+// 5. CONFIGURAÇÕES: PLANOS E REQUISITOS (SIMPLES)
 // ==========================================
 router.post('/planos/criar', auth, adminAuth, async (req, res) => {
     try { const novoPlano = new Plan(req.body); await novoPlano.save(); res.json({ mensagem: 'Node criado.' }); } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
@@ -260,73 +225,18 @@ router.delete('/requisitos/apagar/:id', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 7. MÓDULO CHAT SAC (ESTILO FACEBOOK)
-// ==========================================
-router.get('/suporte/conversas', auth, adminAuth, async (req, res) => {
-    try {
-        const conversas = await Message.aggregate([
-            { $sort: { createdAt: -1 } },
-            { $group: {
-                _id: "$usuarioId",
-                ultimaMensagem: { $first: "$texto" },
-                data: { $first: "$createdAt" },
-                naoLidas: { $sum: { $cond: [{ $and: [{ $eq: ["$remetente", "usuario"]}, { $eq: ["$lida", false]}] }, 1, 0] } }
-            }},
-            { $lookup: { from: "usuarios_blackrock", localField: "_id", foreignField: "_id", as: "user" } },
-            { $unwind: "$user" },
-            { $project: { usuarioId: "$_id", nomeUsuario: "$user.nome", idUnico: "$user.idUnico", ultimaMensagem: 1, naoLidas: 1, data: 1 } },
-            { $sort: { data: -1 } }
-        ]);
-        res.json(conversas);
-    } catch (e) { res.status(500).json({ erro: 'Erro conversas.' }); }
-});
-
-router.get('/suporte/conversa/:userId', auth, adminAuth, async (req, res) => {
-    try {
-        const msgs = await Message.find({ usuarioId: req.params.userId }).sort({ createdAt: 1 });
-        await Message.updateMany({ usuarioId: req.params.userId, remetente: 'usuario', lida: false }, { $set: { lida: true } });
-        res.json(msgs);
-    } catch (e) { res.status(500).json({ erro: 'Erro chat.' }); }
-});
-
-        // 3. Responder ao usuário
-router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
-    try {
-        const { usuarioId, texto } = req.body;
-        if(!texto) return res.status(400).json({ erro: 'Mensagem vazia' });
-        
-        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
-        await msg.save();
-
-        // 🚀 GATILHO DE NOTIFICAÇÃO: Avisa o celular do usuário na hora!
-        await new Notification({
-            usuarioId: usuarioId,
-            titulo: 'Nova Mensagem SAC',
-            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.',
-            tipo: 'chat',
-            link: 'chat.html'
-        }).save();
-
-        res.json({ mensagem: 'Resposta enviada' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
-});
-
-// ==========================================
 // 10. MÓDULO DE REDE & COMISSÕES
 // ==========================================
 router.get('/rede/stats', auth, adminAuth, async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
         const totalAgentes = await User.countDocuments({ isAgente: true });
-        
         const comissoes = await Transaction.find({ tipo: { $in: ['comissao', 'bonus_deposito'] }, status: 'aprovado' });
         
         const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
         const comissoesHoje = comissoes.filter(c => new Date(c.createdAt) >= startOfDay).reduce((a, b) => a + b.valor, 0);
         const totalComissoes = comissoes.filter(c => c.tipo === 'comissao').reduce((a, b) => a + b.valor, 0);
         const totalBonusDep = comissoes.filter(c => c.tipo === 'bonus_deposito').reduce((a, b) => a + b.valor, 0);
-
-        // TOP 5 Agentes (Quem tem mais saldo/convidados)
         const topAgentes = await User.find({ isAgente: true }).sort({ convidadosN1: -1 }).limit(5).select('nome idUnico convidadosN1 isAgente');
 
         res.json({ totalUsers, totalAgentes, comissoesHoje, totalComissoes, totalBonusDep, topAgentes });
@@ -339,11 +249,7 @@ router.get('/rede/arvore/:termo', auth, adminAuth, async (req, res) => {
         const rootUser = await User.findOne({ $or: [{ telefone: q }, { idUnico: isNaN(q) ? 0 : Number(q) }, { nome: new RegExp(q, 'i') }] }).select('nome idUnico isAgente status nivel planoAtivo codigoConvite');
         
         if(!rootUser) return res.status(404).json({ erro: 'Usuário raiz não encontrado.' });
-
-        // Busca N1 (Diretos)
         const n1 = await User.find({ convidadoPor: rootUser.codigoConvite }).select('nome idUnico isAgente status planoAtivo codigoConvite');
-        
-        // Busca N2 (Indiretos) mapeando os códigos do N1
         const codigosN1 = n1.map(u => u.codigoConvite);
         const n2 = await User.find({ convidadoPor: { $in: codigosN1 } }).select('nome idUnico isAgente status planoAtivo convidadoPor');
 
@@ -359,17 +265,12 @@ router.get('/rede/comissoes', auth, adminAuth, async (req, res) => {
 });
 
 router.post('/rede/config', auth, adminAuth, async (req, res) => {
-    try {
-        // Como o sistema de Configs pode variar, guardamos os logs da alteração.
-        // Se tiver uma tabela Config, o update seria feito aqui.
-        res.json({ mensagem: 'Configurações de Rede atualizadas e registadas no sistema!' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configs.' }); }
+    try { res.json({ mensagem: 'Configurações de Rede atualizadas e registadas no sistema!' }); } 
+    catch (e) { res.status(500).json({ erro: 'Erro ao salvar configs.' }); }
 });
 // ==========================================
 // 11. INTELIGÊNCIA AVANÇADA DE REDE (FRAUDE E AUDITORIA)
 // ==========================================
-
-// Detecção de Fraude (IP e Dispositivo)
 router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
     try {
         const suspeitos = await User.aggregate([
@@ -380,16 +281,13 @@ router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro na análise de risco.' }); }
 });
 
-// Histórico de Auditoria
 router.get('/rede/auditoria', auth, adminAuth, async (req, res) => {
     try {
-        // Busca logs de transações que foram alterações de sistema (marcadas como auditoria)
         const logs = await Transaction.find({ tipo: 'auditoria_sistema' }).sort({ createdAt: -1 }).limit(50);
         res.json(logs);
     } catch (e) { res.status(500).json({ erro: 'Erro na auditoria.' }); }
 });
 
-// Ação de Bloqueio de Rede (Sem bloquear a conta)
 router.post('/rede/bloquear-ganhos', auth, adminAuth, async (req, res) => {
     try {
         const { userId, statusRede } = req.body;
@@ -402,8 +300,6 @@ router.post('/rede/bloquear-ganhos', auth, adminAuth, async (req, res) => {
 router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
     try {
         const { id, nome, nivel, valor, percentagem, duracao, tarefas } = req.body;
-        
-        // 🚨 VALIDAÇÕES E CÁLCULOS BLINDADOS NO BACKEND 🚨
         const valInvestimento = Number(valor);
         const valPercentagem = Number(percentagem);
         const dias = Number(duracao);
@@ -413,12 +309,9 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         const ganhoDiarioCalculado = (valInvestimento * valPercentagem) / 100;
         const ganhoTotalCalculado = ganhoDiarioCalculado * dias;
 
-        // 🚀 O SEGREDO: O PACOTE TRADUTOR QUE SALVA AS DUAS LINGUAGENS!
         const dadosPlano = {
             nome: nome,
             ganhoDiario: ganhoDiarioCalculado,
-            
-            // Linguagem Nova (Painel de Admin)
             nivel: nivel,
             valor: valInvestimento,
             percentagem: valPercentagem,
@@ -426,8 +319,6 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
             tarefas: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5)),
             ganhoTotal: ganhoTotalCalculado,
             ativo: true,
-
-            // Linguagem Antiga (Para o sistema de Compra não quebrar)
             estrato: nivel,
             valorEntrada: valInvestimento,
             duracaoDias: dias,
@@ -445,12 +336,9 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
             await novo.save();
             res.json({ mensagem: 'Novo Node criado e matemática sincronizada.' });
         }
-    } catch (e) { 
-        // Agora o servidor vai confessar o erro real se algo correr mal!
-        res.status(500).json({ erro: 'Erro ao salvar plano: ' + e.message }); 
-    }
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano: ' + e.message }); }
 });
-// Rota para estatísticas globais de tarefas
+
 router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
     try {
         const hoje = new Date(); hoje.setHours(0,0,0,0);
@@ -469,14 +357,10 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
         });
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
-// ==========================================
-// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
-// ==========================================
-// ==========================================
-// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
-// ==========================================
 
-// 1. Buscar todos os posts com estatísticas (Admin)
+// ==========================================
+// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
+// ==========================================
 router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
     try {
         const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 });
@@ -484,12 +368,9 @@ router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao carregar mural.' }); }
 });
 
-// 2. Criar Post (Manual) - VERSÃO CORRIGIDA E BLINDADA
 router.post('/feed/criar', auth, adminAuth, async (req, res) => {
     try {
         const { titulo, tipo, texto, isFixado, midiaBase64, formatoMidia } = req.body;
-        
-        // O Tradutor de Categorias
         let tipoFormatado = 'comunicado';
         if (tipo === 'Prova de Pagamento') tipoFormatado = 'prova_pagamento';
         if (tipo === 'Atualização') tipoFormatado = 'comunicado'; 
@@ -505,25 +386,17 @@ router.post('/feed/criar', auth, adminAuth, async (req, res) => {
             autor: 'Administração',
             isAutomatico: false
         });
-        
         await novoPost.save();
         res.json({ mensagem: 'Publicação lançada no mural com sucesso!' });
-    } catch (e) { 
-        console.error("Erro no Feed:", e);
-        res.status(500).json({ erro: 'Falha no servidor: ' + e.message }); 
-    }
+    } catch (e) { res.status(500).json({ erro: 'Falha no servidor: ' + e.message }); }
 });
 
-// 3. Ações de Gestão (Fixar / Apagar)
 router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
     try {
         const { postId, acao } = req.body;
         if(acao === 'fixar') {
-            // Busca o post para inverter o estado (se está fixo, desfixa. Se não, fixa)
             const post = await Feed.findById(postId);
-            if(post) {
-                await Feed.findByIdAndUpdate(postId, { isFixado: !post.isFixado });
-            }
+            if(post) await Feed.findByIdAndUpdate(postId, { isFixado: !post.isFixado });
         }
         if(acao === 'apagar') {
             await Feed.findByIdAndDelete(postId);
@@ -531,27 +404,20 @@ router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Mural atualizado com sucesso.' });
     } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
 });
+
 // ==========================================
 // 15. CENTRAL INTELIGENTE DE NOTIFICAÇÕES
 // ==========================================
-
-// Buscar todas as notificações e fazer limpeza automática (>10 dias)
 router.get('/notificacoes', auth, adminAuth, async (req, res) => {
     try {
         const dezDiasAtras = new Date();
         dezDiasAtras.setDate(dezDiasAtras.getDate() - 10);
-        
-        // Auto-limpeza silenciosa
-        // await Notification.deleteMany({ createdAt: { $lt: dezDiasAtras } }); // Descomente se tiver o modelo importado
-
-        // Como Notification pode ser um modelo novo, você deve criar o arquivo Notification.js no seu backend.
-        // Aqui simulamos a busca para a estrutura (Assumindo que o modelo Notification existe)
+        // await Notification.deleteMany({ createdAt: { $lt: dezDiasAtras } }); 
         const notificacoes = await Notification.find().sort({ createdAt: -1 });
         res.json(notificacoes);
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar alertas.' }); }
 });
 
-// Marcar como lida (Uma ou Todas)
 router.patch('/notificacoes/ler', auth, adminAuth, async (req, res) => {
     try {
         const { id, todas } = req.body;
@@ -564,7 +430,6 @@ router.patch('/notificacoes/ler', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao atualizar notificação.' }); }
 });
 
-// Limpar histórico manualmente
 router.delete('/notificacoes/limpar', auth, adminAuth, async (req, res) => {
     try {
         await Notification.deleteMany({});
@@ -575,36 +440,23 @@ router.delete('/notificacoes/limpar', auth, adminAuth, async (req, res) => {
 // ==========================================
 // 17. SISTEMA & REGRAS (CONFIGURAÇÃO GLOBAL DA PLATAFORMA)
 // ==========================================
-
-// Buscar as configurações atuais
 router.get('/system', auth, adminAuth, async (req, res) => {
     try {
-        // Assume que existe apenas 1 documento de configuração no banco
         let config = await System.findOne(); 
-        if (!config) {
-            // Se não existir, cria um padrão
-            config = await System.create({ saqueAtivo: true, modoManutencao: false });
-        }
+        if (!config) config = await System.create({ saqueAtivo: true, modoManutencao: false });
         res.json(config);
     } catch (e) { res.status(500).json({ erro: 'Erro ao carregar configurações do sistema.' }); }
 });
 
-// Atualizar as configurações (Salvar Alterações Globais)
 router.patch('/system', auth, adminAuth, async (req, res) => {
     try {
         const payload = req.body;
-        
-        // Encontra a configuração e atualiza com os novos dados recebidos do Frontend
         let config = await System.findOne();
-        if (!config) {
-            config = new System(payload);
-        } else {
-            Object.assign(config, payload);
-        }
+        if (!config) config = new System(payload);
+        else Object.assign(config, payload);
         
         await config.save();
         
-        // Regista a ação na Caixa Negra (Logs do Sistema)
         await SystemLog.create({
             usuarioId: req.usuario.id,
             usuario: 'Diretoria (ADMIN)',
@@ -614,16 +466,13 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
             status: 'sucesso',
             detalhes: payload
         });
-
         res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
 });
 
 // ==========================================
-// 17. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL BLINDADA)
+// 18. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL CONSOLIDADA)
 // ==========================================
-
-// 1. Lista de conversas
 router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
     try {
         const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
@@ -631,7 +480,6 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
 
         mensagens.forEach(msg => {
             if (!msg.usuarioId || !msg.usuarioId._id) return; 
-
             const uid = msg.usuarioId._id.toString();
             if (!conversas[uid]) {
                 conversas[uid] = {
@@ -644,18 +492,12 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
                     naoLidas: 0
                 };
             }
-            if (msg.remetente === 'usuario' && !msg.lida) {
-                conversas[uid].naoLidas++;
-            }
+            if (msg.remetente === 'usuario' && !msg.lida) conversas[uid].naoLidas++;
         });
-
         res.json(Object.values(conversas).sort((a, b) => b.data - a.data));
-    } catch (e) { 
-        res.status(500).json({ erro: 'Falha ao carregar lista de suporte.' }); 
-    }
+    } catch (e) { res.status(500).json({ erro: 'Falha ao carregar lista de suporte.' }); }
 });
 
-// 2. Abrir conversa
 router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
@@ -665,7 +507,6 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
 });
 
-// 3. Responder
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const { usuarioId, texto } = req.body;
@@ -673,11 +514,21 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
         
         const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
         await msg.save();
+
+        await new Notification({
+            usuarioId: usuarioId,
+            titulo: 'Nova Mensagem SAC',
+            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.',
+            tipo: 'chat',
+            link: 'chat.html'
+        }).save();
+
         res.json({ mensagem: 'Resposta enviada' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
 });
+
 // ==========================================
-// BUSCAR RESUMO DE PLANOS (TELA DO ADMIN)
+// 19. BUSCAR RESUMO DE PLANOS (TELA DO ADMIN)
 // ==========================================
 router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
     try {
@@ -685,21 +536,42 @@ router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
         const usuariosAtivos = await User.find({ planoAtivo: { $ne: 'Nenhum' } });
         
         let totalInvestido = 0;
-        
         const planosFormatados = planosDb.map(plano => {
             const clientesNestePlano = usuariosAtivos.filter(u => u.planoAtivo === plano.nome).length;
             const valorDoPlano = plano.valor || plano.valorEntrada || 0;
             totalInvestido += (clientesNestePlano * valorDoPlano);
 
-            return {
-                ...plano._doc,
-                usuariosAtivos: clientesNestePlano
-            };
+            return { ...plano._doc, usuariosAtivos: clientesNestePlano };
         });
 
         res.json({ planos: planosFormatados, totalInvestido: totalInvestido });
-    } catch (e) {
-        res.status(500).json({ erro: 'Erro ao carregar o resumo de planos do Admin.' });
-    }
+    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar o resumo de planos do Admin.' }); }
 });
+
+// ==========================================
+// 20. AUDITORIA E LOGS (CAIXA NEGRA) - NOVO E SEGURO
+// ==========================================
+router.get('/logs/resumo', auth, adminAuth, async (req, res) => {
+    try {
+        const startOfDay = new Date();
+        startOfDay.setHours(0,0,0,0);
+        
+        // countDocuments é altamente otimizado para bancos de dados massivos
+        const totalHoje = await SystemLog.countDocuments({ createdAt: { $gte: startOfDay } });
+        const erros = await SystemLog.countDocuments({ status: 'falha' });
+        const suspeitas = await SystemLog.countDocuments({ tipo: 'SEGURANCA' }); 
+        const adminAcoes = await SystemLog.countDocuments({ tipo: 'ADMIN' });
+
+        res.json({ totalHoje, erros, suspeitas, adminAcoes });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar estatísticas da auditoria.' }); }
+});
+
+router.get('/logs/listar', auth, adminAuth, async (req, res) => {
+    try {
+        // 🚀 CORREÇÃO DE ESCALABILIDADE: Limite estrito de 300 registos recentes para a Caixa Negra.
+        const logs = await SystemLog.find().sort({ createdAt: -1 }).limit(300);
+        res.json(logs);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao puxar a base de dados de auditoria.' }); }
+});
+
 module.exports = router;

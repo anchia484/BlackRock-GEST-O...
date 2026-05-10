@@ -44,6 +44,12 @@ router.post('/deposito', auth, async (req, res) => {
         const userId = getUserId(req);
         const { canal, numeroOrigem, valor, idTransacaoBancaria, comprovanteBase64, senhaConfirmacao } = req.body;
 
+        // 🚀 PROBLEMA 9 RESOLVIDO: PROTEÇÃO CONTRA VALORES NEGATIVOS OU INVÁLIDOS
+        const valorNumerico = Number(valor);
+        if (isNaN(valorNumerico) || valorNumerico <= 0) {
+            return res.status(400).json({ erro: 'Valor de depósito inválido. O montante deve ser maior que zero.' });
+        }
+
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
@@ -60,13 +66,11 @@ router.post('/deposito', auth, async (req, res) => {
             idUnicoUsuario: usuario.idUnico,
             telefoneUsuario: usuario.telefone,
             tipo: 'deposito',
-            valor: Number(valor),
+            valor: valorNumerico, // Usa a variável já tratada e blindada
             status: 'pendente',
             operadora: operadoraFormatada,
             
-            // 🎯 AQUI ESTÁ A CORREÇÃO: Agora o nome bate perfeitamente com a Base de Dados!
             numeroOrigem: numeroOrigem, 
-            
             idTransacaoBancaria,
             comprovanteBase64
         });
@@ -78,7 +82,7 @@ router.post('/deposito', auth, async (req, res) => {
             const novaNotif = new Notification({
                 usuarioId: usuario._id,
                 titulo: 'Depósito em Análise ⏳',
-                mensagem: `O seu pedido de depósito no valor de ${Number(valor).toLocaleString('pt-MZ')} MZN foi recebido e está aguardando auditoria.`,
+                mensagem: `O seu pedido de depósito no valor de ${valorNumerico.toLocaleString('pt-MZ')} MZN foi recebido e está aguardando auditoria.`,
                 tipo: 'financeiro',
                 lida: false
             });
@@ -125,7 +129,7 @@ router.post('/saque', auth, async (req, res) => {
             return res.status(400).json({ erro: 'Saldo insuficiente.' });
         }
 
-        // DESCONTA SALDO IMEDIATAMENTE
+        // DESCONTA SALDO IMEDIATAMENTE (Transação)
         usuario.saldo -= valorSaqueBruto;
         await usuario.save();
 
@@ -164,7 +168,10 @@ router.post('/saque', auth, async (req, res) => {
             await novaNotif.save();
         } catch(errNotif) { console.error("Erro ao gerar notif saque:", errNotif); }
 
-        res.json({ mensagem: 'Pedido de levantamento enviado com sucesso!' });
+        res.json({ 
+            mensagem: 'Pedido de levantamento enviado com sucesso!',
+            novoSaldo: usuario.saldo
+        });
 
     } catch (erro) {
         console.error("Erro saque:", erro);

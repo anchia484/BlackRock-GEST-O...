@@ -36,7 +36,8 @@ async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoNaTarefa) {
             // Verifica se é a primeiríssima vez que este usuário faz uma tarefa
             const totalTarefas = await Transaction.countDocuments({ usuarioId: usuarioQueFezTarefa._id, tipo: 'ganho_tarefa' });
             
-            if (totalTarefas === 0) { // Gatilho: É a 1ª tarefa de sempre!
+            // NOTA: Como a transação atómica ocorreu logo antes desta função, o histórico de tarefas será 1 na 1ª execução.
+            if (totalTarefas === 1) { // Gatilho: É a 1ª tarefa de sempre!
                 const planoDoUsuario = await Plan.findOne({ nome: usuarioQueFezTarefa.planoAtivo });
                 const valorGastoNoPlano = planoDoUsuario ? (planoDoUsuario.valor || planoDoUsuario.valorEntrada || 0) : 0;
                 
@@ -211,38 +212,56 @@ router.get('/status', auth, async (req, res) => {
 // ==============================================================
 router.post('/executar', auth, async (req, res) => {
     try {
-        const usuario = await User.findById(req.usuario.id);
-        const plano = await Plan.findOne({ nome: usuario.planoAtivo });
+        let usuario = await User.findById(req.usuario.id);
+        if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 
+        const plano = await Plan.findOne({ nome: usuario.planoAtivo });
         if (!plano) return res.status(400).json({ erro: 'Nenhum plano ativo encontrado.' });
 
-        const limite = plano.tarefas || plano.limiteTarefasDia || 5;
-        if (usuario.tarefasFeitasHoje >= limite) {
-            return res.status(400).json({ erro: 'Limite diário de operações atingido.' });
+        // 🚀 LÓGICA DE RESET PREGUIÇOSO DAS 00H00 ANTES DA ATUALIZAÇÃO ATÔMICA
+        const dataAtual = new Date();
+        const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
+        const isMesmoDia = dataAtual.getDate() === dataUltima.getDate() &&
+                           dataAtual.getMonth() === dataUltima.getMonth() &&
+                           dataAtual.getFullYear() === dataUltima.getFullYear();
+
+        if (!isMesmoDia && usuario.tarefasFeitasHoje > 0) {
+            usuario = await User.findByIdAndUpdate(usuario._id, { tarefasFeitasHoje: 0 }, { new: true });
         }
 
-        // Calcula o ganho da tarefa atual
+        const limite = plano.tarefas || plano.limiteTarefasDia || 5;
         const ganhoPorTarefa = plano.ganhoDiario / limite;
 
-        // 🚀 O NOVO MOTOR DE BÓNUS É CHAMADO AQUI (Antes de faturar a tarefa como concluída)
-        await distribuirComissoesDeRede(usuario, ganhoPorTarefa);
+        // ====================================================================
+        // TRANSAÇÃO ATÓMICA DE TAREFAS: PREVINE DOUBLE SPEND (MÚLTIPLOS CLIQUES)
+        // ====================================================================
+        const usuarioAtualizado = await User.findOneAndUpdate(
+            { _id: req.usuario.id, tarefasFeitasHoje: { $lt: limite } },
+            {
+                $inc: { saldo: ganhoPorTarefa, saldoPrincipal: ganhoPorTarefa, tarefasFeitasHoje: 1 },
+                $set: { dataUltimaTarefa: new Date() } 
+            },
+            { new: true }
+        );
 
-        // Paga ao Usuário e atualiza a hora da tarefa
-        await User.findByIdAndUpdate(usuario._id, {
-            $inc: { saldo: ganhoPorTarefa, saldoPrincipal: ganhoPorTarefa, tarefasFeitasHoje: 1 },
-            $set: { dataUltimaTarefa: new Date() } 
-        });
+        // Se falhar, é porque o limite já foi atingido ou houve clique duplo.
+        if (!usuarioAtualizado) {
+            return res.status(400).json({ erro: 'Limite diário de operações atingido ou submissão simultânea bloqueada.' });
+        }
 
         // Recibo do usuário
         try {
             await new Transaction({
-                usuarioId: usuario._id,
+                usuarioId: usuarioAtualizado._id,
                 tipo: 'ganho_tarefa',
                 valor: ganhoPorTarefa,
                 status: 'concluido',
                 data: new Date()
             }).save();
         } catch (err) {}
+
+        // 🚀 O NOVO MOTOR DE BÓNUS É CHAMADO AQUI (Agora de forma segura, após a transação atômica!)
+        await distribuirComissoesDeRede(usuarioAtualizado, ganhoPorTarefa);
 
         res.json({ sucesso: true, ganho: ganhoPorTarefa });
 

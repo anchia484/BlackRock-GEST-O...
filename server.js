@@ -6,9 +6,13 @@ const cors = require('cors');
 const app = express();
 app.use(cors());
 
-// Aumenta o limite para aceitar imagens grandes no Feed e Depósitos
-app.use(express.json({ limit: '70mb' }));
-app.use(express.urlencoded({ limit: '70mb', extended: true }));
+// ====================================================================
+// 🚀 PROTEÇÃO DE MEMÓRIA (OOM) E LIMITE DO MONGODB (Max 16MB por Doc)
+// Limite reduzido de '70mb' para '10mb'. Isso evita que uploads gigantes
+// derrubem o servidor Node.js ou quebrem o banco de dados.
+// ====================================================================
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // Importando as rotas
 const authRoutes = require('./auth');
@@ -20,7 +24,8 @@ const adminRoutes = require('./adminRoutes');
 const feedRoutes = require('./feedRoutes');
 const supportRoutes = require('./supportRoutes');
 const systemRoutes = require('./systemRoutes');
-const userRoutes = require('./userRoutes'); // <-- ADICIONADO: Rota de Usuário
+const userRoutes = require('./userRoutes'); 
+const notificationRoutes = require('./notificationRoutes'); 
 
 // Configurando as URLs da API
 app.use('/api/auth', authRoutes);
@@ -32,8 +37,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/feed', feedRoutes); 
 app.use('/api/suporte', supportRoutes);
 app.use('/api/sistema', systemRoutes);
-app.use('/api/usuario', userRoutes); // <-- ADICIONADO: Conexão com o frontend
-const notificationRoutes = require('./notificationRoutes'); // Crie este arquivo na Parte 2
+app.use('/api/usuario', userRoutes); 
 app.use('/api/notificacoes', notificationRoutes);
 
 app.get('/', (req, res) => {
