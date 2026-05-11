@@ -3,6 +3,9 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 
+// Importação do Modelo de Usuário para o Varredor de Fundo
+const User = require('./User'); 
+
 const app = express();
 app.use(cors());
 
@@ -44,11 +47,58 @@ app.get('/', (req, res) => {
     res.send('API BlackRock GESTÃO DE ATIVOS funcionando!');
 });
 
+// ====================================================================
+// 🧹 MOTOR SILENCIOSO: VARREDOR DE PLANOS FANTASMAS (A CADA 24 HORAS À MEIA-NOITE)
+// ====================================================================
+async function executarLimpezaDePlanos() {
+    try {
+        const agora = new Date();
+        // Procura utilizadores que têm um plano ativo, mas a data de expiração já passou
+        const resultado = await User.updateMany(
+            { planoAtivo: { $ne: 'Nenhum' }, dataExpiracaoPlano: { $lt: agora } },
+            { $set: { planoAtivo: 'Nenhum' } }
+        );
+        
+        console.log(`[AUDITORIA BLACKROCK] Varredura Concluída: ${resultado.modifiedCount} planos expirados foram desativados.`);
+    } catch (error) {
+        console.error('[ERRO SISTEMA] Falha ao executar varredura de planos:', error);
+    }
+}
+
+function iniciarMotorDeVarredura() {
+    const agora = new Date();
+    
+    // Calcula o tempo exato até à próxima meia-noite
+    const proximaMeiaNoite = new Date(agora);
+    proximaMeiaNoite.setHours(24, 0, 0, 0); 
+    
+    const tempoAteMeiaNoite = proximaMeiaNoite.getTime() - agora.getTime();
+
+    console.log(`[SISTEMA] Varredor armado. Primeira execução em ${Math.round(tempoAteMeiaNoite / 1000 / 60)} minutos.`);
+
+    // Aguarda até à meia-noite para dar o primeiro disparo
+    setTimeout(() => {
+        executarLimpezaDePlanos();
+        
+        // A partir desse momento, entra num loop exato a cada 24 horas (1 dia)
+        const umDiaEmMs = 24 * 60 * 60 * 1000;
+        setInterval(executarLimpezaDePlanos, umDiaEmMs);
+        
+    }, tempoAteMeiaNoite);
+}
+
+// ====================================================================
+// INICIALIZAÇÃO DO SERVIDOR E BANCO DE DADOS
+// ====================================================================
 mongoose.connect(process.env.MONGO_URI)
 .then(() => {
     console.log('✅ Banco de dados MongoDB conectado!');
+    
     app.listen(process.env.PORT || 3000, () => {
         console.log(`🚀 Servidor rodando na porta ${process.env.PORT || 3000}`);
+        
+        // Ativa o motor silencioso logo após o servidor iniciar com sucesso
+        iniciarMotorDeVarredura();
     });
 })
 .catch((err) => console.log('Erro ao conectar no MongoDB:', err));

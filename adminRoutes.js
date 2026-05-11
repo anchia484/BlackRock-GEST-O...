@@ -36,28 +36,44 @@ const adminAuth = async (req, res, next) => {
 };
 
 // ==========================================
-// 1. DASHBOARD CORPORATIVO E ESTATÍSTICAS
+// 1. DASHBOARD CORPORATIVO (ESCALABILIDADE EXTREMA)
 // ==========================================
 router.get('/dashboard', auth, adminAuth, async (req, res) => {
     try {
-        const transacoes = await Transaction.find();
-        const aprovadas = transacoes.filter(t => t.status === 'aprovado');
-        const pendentes = transacoes.filter(t => t.status === 'pendente');
+        // 🚀 PREVENÇÃO DE COLAPSO: Usando MongoDB Aggregation para não encher a memória RAM
+        const aggTotais = await Transaction.aggregate([
+            { $match: { status: { $in: ['aprovado', 'concluido'] } } },
+            { $group: { _id: "$tipo", total: { $sum: "$valor" } } }
+        ]);
 
-        const totalDepositado = aprovadas.filter(t => t.tipo === 'deposito').reduce((a, b) => a + b.valor, 0);
-        const totalSacado = aprovadas.filter(t => t.tipo === 'saque').reduce((a, b) => a + b.valor, 0);
-        
-        const startOfDay = new Date();
-        startOfDay.setHours(0,0,0,0);
-        const depositosHoje = aprovadas.filter(t => t.tipo === 'deposito' && new Date(t.createdAt) >= startOfDay).reduce((a, b) => a + b.valor, 0);
-        
+        let totalDepositado = 0; let totalSacado = 0;
+        aggTotais.forEach(g => {
+            if (g._id === 'deposito') totalDepositado = g.total;
+            if (g._id === 'saque') totalSacado = g.total;
+        });
+
+        // 🚀 Totais de Hoje
+        const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
+        const aggHoje = await Transaction.aggregate([
+            { $match: { tipo: 'deposito', status: { $in: ['aprovado', 'concluido'] }, createdAt: { $gte: startOfDay } } },
+            { $group: { _id: null, total: { $sum: "$valor" } } }
+        ]);
+        const depositosHoje = aggHoje.length > 0 ? aggHoje[0].total : 0;
+
+        // 🚀 Contagens
         const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
         const novosUsuariosHoje = await User.countDocuments({ createdAt: { $gte: startOfDay } });
+        const depPendentes = await Transaction.countDocuments({ tipo: 'deposito', status: 'pendente' });
+        const saqPendentes = await Transaction.countDocuments({ tipo: 'saque', status: 'pendente' });
 
-        const depPendentes = pendentes.filter(t => t.tipo === 'deposito').length;
-        const saqPendentes = pendentes.filter(t => t.tipo === 'saque').length;
+        // 🚀 Carrega apenas as transações dos últimos 7 dias para o Gráfico e Logs (Poupa o Servidor)
+        const seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
+        const transacoesRecentes = await Transaction.find({ 
+            status: { $in: ['aprovado', 'concluido'] }, 
+            createdAt: { $gte: seteDiasAtras } 
+        }).sort({ createdAt: -1 });
 
-        const logs = aprovadas.sort((a,b) => b.createdAt - a.createdAt).slice(0, 50).map(u => ({
+        const logs = transacoesRecentes.slice(0, 50).map(u => ({
             id: u._id,
             usuario: u.nomeUsuario || "ID: " + u.idUnicoUsuario,
             tipo: u.tipo,
@@ -73,8 +89,8 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
             const dStart = new Date(d); dStart.setHours(0,0,0,0);
             const dEnd = new Date(d); dEnd.setHours(23,59,59,999);
             
-            chartData.depositos.push(aprovadas.filter(t => t.tipo === 'deposito' && t.createdAt >= dStart && t.createdAt <= dEnd).reduce((a,b) => a+b.valor, 0));
-            chartData.saques.push(aprovadas.filter(t => t.tipo === 'saque' && t.createdAt >= dStart && t.createdAt <= dEnd).reduce((a,b) => a+b.valor, 0));
+            chartData.depositos.push(transacoesRecentes.filter(t => t.tipo === 'deposito' && t.createdAt >= dStart && t.createdAt <= dEnd).reduce((a,b) => a+b.valor, 0));
+            chartData.saques.push(transacoesRecentes.filter(t => t.tipo === 'saque' && t.createdAt >= dStart && t.createdAt <= dEnd).reduce((a,b) => a+b.valor, 0));
         }
 
         res.json({ 
@@ -86,7 +102,7 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
             ultimasAcoes: logs,
             chartData
         });
-    } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço e estatísticas.' }); }
 });
 
 router.post('/reset-sistema', auth, adminAuth, async (req, res) => {
@@ -112,7 +128,6 @@ router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
 // ==========================================
 router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
     try {
-        // 🚀 CORREÇÃO DE ESCALABILIDADE: Limite de 300 registos mais recentes!
         const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } })
                                             .sort({ createdAt: -1 })
                                             .limit(300);
@@ -165,9 +180,8 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
     } catch (e) { res.status(500).json({ erro: 'Falha no servidor ao processar.' }); }
 });
-
 // ==========================================
-// 4. GESTÃO DE USUÁRIOS
+// 4. GESTÃO DE USUÁRIOS E CORREÇÃO DO BURACO NEGRO
 // ==========================================
 router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
     try {
@@ -187,10 +201,26 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
         if (acao === 'bloquear') u.status = 'bloqueado';
         if (acao === 'desbloquear') u.status = 'ativo';
         if (acao === 'analise') u.status = 'analise';
-        if (acao === 'saldo_add') u.saldo += Number(valor);
+        
+        // 🚀 CORREÇÃO DO GHOST EDIT (GERA RECIBO NO HISTÓRICO QUANDO O ADMIN ALTERA O SALDO)
+        if (acao === 'saldo_add') {
+            const valorAdd = Number(valor);
+            u.saldo += valorAdd;
+            await new Transaction({
+                usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
+                tipo: 'deposito', valor: valorAdd, status: 'aprovado',
+                operadora: 'Ajuste Admin', idTransacaoBancaria: 'ADM-ADD-' + Date.now()
+            }).save();
+        }
         if (acao === 'saldo_rem') {
-            if(u.saldo < valor) return res.status(400).json({ erro: 'Saldo insuficiente.' });
-            u.saldo -= Number(valor);
+            const valorRem = Number(valor);
+            if(u.saldo < valorRem) return res.status(400).json({ erro: 'Saldo insuficiente no usuário.' });
+            u.saldo -= valorRem;
+            await new Transaction({
+                usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
+                tipo: 'saque', valor: valorRem, status: 'aprovado',
+                operadora: 'Ajuste Admin', numeroContaDestino: 'Removido pela Diretoria'
+            }).save();
         }
         if (acao === 'senha_reset') {
             const salt = await bcrypt.genSalt(10);
@@ -198,8 +228,8 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             u.precisaTrocarSenha = true;
         }
         await u.save();
-        res.json({ mensagem: 'Ação executada.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro na ação.' }); }
+        res.json({ mensagem: 'Ação executada com sucesso e registada na auditoria.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro na ação administrativa.' }); }
 });
 
 // ==========================================
@@ -231,11 +261,18 @@ router.get('/rede/stats', auth, adminAuth, async (req, res) => {
     try {
         const totalUsers = await User.countDocuments();
         const totalAgentes = await User.countDocuments({ isAgente: true });
-        const comissoes = await Transaction.find({ tipo: { $in: ['comissao', 'bonus_deposito'] }, status: 'aprovado' });
+        
+        // 🚀 OTIMIZAÇÃO: Busca apenas comissões recentes para não estourar a memória
+        const diasAtras = new Date(); diasAtras.setDate(diasAtras.getDate() - 30);
+        const comissoes = await Transaction.find({ 
+            tipo: { $in: ['comissao', 'bonus_deposito', 'bonus_rede'] }, 
+            status: { $in: ['aprovado', 'concluido'] },
+            createdAt: { $gte: diasAtras }
+        });
         
         const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
         const comissoesHoje = comissoes.filter(c => new Date(c.createdAt) >= startOfDay).reduce((a, b) => a + b.valor, 0);
-        const totalComissoes = comissoes.filter(c => c.tipo === 'comissao').reduce((a, b) => a + b.valor, 0);
+        const totalComissoes = comissoes.filter(c => c.tipo === 'comissao' || c.tipo === 'bonus_rede').reduce((a, b) => a + b.valor, 0);
         const totalBonusDep = comissoes.filter(c => c.tipo === 'bonus_deposito').reduce((a, b) => a + b.valor, 0);
         const topAgentes = await User.find({ isAgente: true }).sort({ convidadosN1: -1 }).limit(5).select('nome idUnico convidadosN1 isAgente');
 
@@ -246,11 +283,11 @@ router.get('/rede/stats', auth, adminAuth, async (req, res) => {
 router.get('/rede/arvore/:termo', auth, adminAuth, async (req, res) => {
     try {
         const q = req.params.termo;
-        const rootUser = await User.findOne({ $or: [{ telefone: q }, { idUnico: isNaN(q) ? 0 : Number(q) }, { nome: new RegExp(q, 'i') }] }).select('nome idUnico isAgente status nivel planoAtivo codigoConvite');
+        const rootUser = await User.findOne({ $or: [{ telefone: q }, { idUnico: isNaN(q) ? 0 : Number(q) }, { nome: new RegExp(q, 'i') }] }).select('nome idUnico isAgente status nivel planoAtivo codigoConvite meuCodigoConvite');
         
         if(!rootUser) return res.status(404).json({ erro: 'Usuário raiz não encontrado.' });
-        const n1 = await User.find({ convidadoPor: rootUser.codigoConvite }).select('nome idUnico isAgente status planoAtivo codigoConvite');
-        const codigosN1 = n1.map(u => u.codigoConvite);
+        const n1 = await User.find({ convidadoPor: rootUser.meuCodigoConvite }).select('nome idUnico isAgente status planoAtivo meuCodigoConvite');
+        const codigosN1 = n1.map(u => u.meuCodigoConvite);
         const n2 = await User.find({ convidadoPor: { $in: codigosN1 } }).select('nome idUnico isAgente status planoAtivo convidadoPor');
 
         res.json({ raiz: rootUser, diretos: n1, indiretos: n2 });
@@ -259,7 +296,7 @@ router.get('/rede/arvore/:termo', auth, adminAuth, async (req, res) => {
 
 router.get('/rede/comissoes', auth, adminAuth, async (req, res) => {
     try {
-        const comissoes = await Transaction.find({ tipo: { $in: ['comissao', 'bonus_deposito'] } }).sort({ createdAt: -1 }).limit(100);
+        const comissoes = await Transaction.find({ tipo: { $in: ['comissao', 'bonus_deposito', 'bonus_rede'] } }).sort({ createdAt: -1 }).limit(200);
         res.json(comissoes);
     } catch (e) { res.status(500).json({ erro: 'Erro nas comissões.' }); }
 });
@@ -268,6 +305,7 @@ router.post('/rede/config', auth, adminAuth, async (req, res) => {
     try { res.json({ mensagem: 'Configurações de Rede atualizadas e registadas no sistema!' }); } 
     catch (e) { res.status(500).json({ erro: 'Erro ao salvar configs.' }); }
 });
+
 // ==========================================
 // 11. INTELIGÊNCIA AVANÇADA DE REDE (FRAUDE E AUDITORIA)
 // ==========================================
@@ -283,7 +321,7 @@ router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
 
 router.get('/rede/auditoria', auth, adminAuth, async (req, res) => {
     try {
-        const logs = await Transaction.find({ tipo: 'auditoria_sistema' }).sort({ createdAt: -1 }).limit(50);
+        const logs = await Transaction.find({ tipo: 'auditoria_sistema' }).sort({ createdAt: -1 }).limit(100);
         res.json(logs);
     } catch (e) { res.status(500).json({ erro: 'Erro na auditoria.' }); }
 });
@@ -363,7 +401,7 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
 // ==========================================
 router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
     try {
-        const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 });
+        const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 }).limit(100);
         res.json(posts);
     } catch (e) { res.status(500).json({ erro: 'Erro ao carregar mural.' }); }
 });
@@ -410,10 +448,7 @@ router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
 // ==========================================
 router.get('/notificacoes', auth, adminAuth, async (req, res) => {
     try {
-        const dezDiasAtras = new Date();
-        dezDiasAtras.setDate(dezDiasAtras.getDate() - 10);
-        // await Notification.deleteMany({ createdAt: { $lt: dezDiasAtras } }); 
-        const notificacoes = await Notification.find().sort({ createdAt: -1 });
+        const notificacoes = await Notification.find().sort({ createdAt: -1 }).limit(300);
         res.json(notificacoes);
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar alertas.' }); }
 });
@@ -471,11 +506,12 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 18. ÁREA DE SUPORTE (CHAT ADMIN - VERSÃO FINAL CONSOLIDADA)
+// 18. ÁREA DE SUPORTE (CHAT ADMIN - LIMITADO POR SEGURANÇA OOM)
 // ==========================================
 router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
     try {
-        const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 });
+        // 🚀 LIMITADO para impedir que o servidor esgote a memória ao ler todos os chats
+        const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 }).limit(3000);
         const conversas = {};
 
         mensagens.forEach(msg => {
@@ -502,7 +538,7 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
     try {
         const { id } = req.params;
         await Message.updateMany({ usuarioId: id, remetente: 'usuario', lida: false }, { lida: true });
-        const chat = await Message.find({ usuarioId: id }).sort({ createdAt: 1 });
+        const chat = await Message.find({ usuarioId: id }).sort({ createdAt: 1 }).limit(200);
         res.json(chat);
     } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
 });
@@ -528,7 +564,7 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 19. BUSCAR RESUMO DE PLANOS (TELA DO ADMIN)
+// 19. BUSCAR RESUMO DE PLANOS
 // ==========================================
 router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
     try {
@@ -549,14 +585,13 @@ router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 20. AUDITORIA E LOGS (CAIXA NEGRA) - NOVO E SEGURO
+// 20. AUDITORIA E LOGS (CAIXA NEGRA OTIMIZADA)
 // ==========================================
 router.get('/logs/resumo', auth, adminAuth, async (req, res) => {
     try {
         const startOfDay = new Date();
         startOfDay.setHours(0,0,0,0);
         
-        // countDocuments é altamente otimizado para bancos de dados massivos
         const totalHoje = await SystemLog.countDocuments({ createdAt: { $gte: startOfDay } });
         const erros = await SystemLog.countDocuments({ status: 'falha' });
         const suspeitas = await SystemLog.countDocuments({ tipo: 'SEGURANCA' }); 
@@ -568,7 +603,6 @@ router.get('/logs/resumo', auth, adminAuth, async (req, res) => {
 
 router.get('/logs/listar', auth, adminAuth, async (req, res) => {
     try {
-        // 🚀 CORREÇÃO DE ESCALABILIDADE: Limite estrito de 300 registos recentes para a Caixa Negra.
         const logs = await SystemLog.find().sort({ createdAt: -1 }).limit(300);
         res.json(logs);
     } catch (e) { res.status(500).json({ erro: 'Erro ao puxar a base de dados de auditoria.' }); }

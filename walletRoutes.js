@@ -44,7 +44,7 @@ router.post('/deposito', auth, async (req, res) => {
         const userId = getUserId(req);
         const { canal, numeroOrigem, valor, idTransacaoBancaria, comprovanteBase64, senhaConfirmacao } = req.body;
 
-        // 🚀 PROBLEMA 9 RESOLVIDO: PROTEÇÃO CONTRA VALORES NEGATIVOS OU INVÁLIDOS
+        // PROTEÇÃO CONTRA VALORES NEGATIVOS OU INVÁLIDOS
         const valorNumerico = Number(valor);
         if (isNaN(valorNumerico) || valorNumerico <= 0) {
             return res.status(400).json({ erro: 'Valor de depósito inválido. O montante deve ser maior que zero.' });
@@ -98,12 +98,17 @@ router.post('/deposito', auth, async (req, res) => {
 });
 
 // ===============================
-// SAQUE (TAXA DINÂMICA E REAL)
+// SAQUE (TAXA DINÂMICA E SEGURANÇA ATÓMICA)
 // ===============================
 router.post('/saque', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
         const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao, operadora } = req.body;
+
+        const valorSaqueBruto = Number(valor);
+        if (isNaN(valorSaqueBruto) || valorSaqueBruto <= 0) {
+            return res.status(400).json({ erro: 'Valor de saque inválido.' });
+        }
 
         const usuario = await User.findById(userId).select('+senha');
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
@@ -115,23 +120,29 @@ router.post('/saque', auth, async (req, res) => {
         if (!config) return res.status(500).json({ erro: 'Sistema offline.' });
 
         if (config.saqueAtivo === false) {
-            return res.status(403).json({ erro: 'Saques desativados temporariamente.' });
+            return res.status(403).json({ erro: 'Saques desativados temporariamente pela Diretoria.' });
         }
 
-        const valorSaqueBruto = Number(valor);
         const limiteMinimo = config.saqueLimite || 200;
 
         if (valorSaqueBruto < limiteMinimo) {
             return res.status(400).json({ erro: `Mínimo para saque: ${limiteMinimo} MZN` });
         }
 
-        if (usuario.saldo < valorSaqueBruto) {
-            return res.status(400).json({ erro: 'Saldo insuficiente.' });
-        }
+        // ====================================================================
+        // 🚀 CORREÇÃO CRÍTICA: OPERAÇÃO ATÓMICA (PREVINE DUPLO SAQUE / RACE CONDITION)
+        // ====================================================================
+        // O banco de dados só atualiza se o saldo for maior ou igual ao saque,
+        // garantindo que múltiplos cliques não furem a segurança do sistema.
+        const usuarioAtualizado = await User.findOneAndUpdate(
+            { _id: usuario._id, saldo: { $gte: valorSaqueBruto } },
+            { $inc: { saldo: -valorSaqueBruto } },
+            { new: true } // Retorna o usuário já com o saldo descontado
+        );
 
-        // DESCONTA SALDO IMEDIATAMENTE (Transação)
-        usuario.saldo -= valorSaqueBruto;
-        await usuario.save();
+        if (!usuarioAtualizado) {
+            return res.status(400).json({ erro: 'Saldo insuficiente ou transação simultânea bloqueada pelo sistema de segurança.' });
+        }
 
         // PUXA A TAXA REAL DO SISTEMA (CONGELAMENTO)
         const taxaAtual = config.saqueTaxa ?? 10;
@@ -139,10 +150,10 @@ router.post('/saque', auth, async (req, res) => {
         const valorLiquido = valorSaqueBruto - valorTaxa;
 
         const novaTransacao = new Transaction({
-            usuarioId: usuario._id,
-            nomeUsuario: usuario.nome,
-            idUnicoUsuario: usuario.idUnico,
-            telefoneUsuario: usuario.telefone,
+            usuarioId: usuarioAtualizado._id,
+            nomeUsuario: usuarioAtualizado.nome,
+            idUnicoUsuario: usuarioAtualizado.idUnico,
+            telefoneUsuario: usuarioAtualizado.telefone,
             tipo: 'saque',
             valor: valorSaqueBruto,
             taxaAplicada: taxaAtual, 
@@ -159,7 +170,7 @@ router.post('/saque', auth, async (req, res) => {
         // NOTIFICAÇÃO DE SAQUE 
         try {
             const novaNotif = new Notification({
-                usuarioId: usuario._id,
+                usuarioId: usuarioAtualizado._id,
                 titulo: 'Levantamento Solicitado ⏳',
                 mensagem: `O seu pedido de levantamento de ${valorSaqueBruto.toLocaleString('pt-MZ')} MZN foi enviado. Em breve o valor líquido será creditado na sua conta.`,
                 tipo: 'financeiro',
@@ -170,7 +181,7 @@ router.post('/saque', auth, async (req, res) => {
 
         res.json({ 
             mensagem: 'Pedido de levantamento enviado com sucesso!',
-            novoSaldo: usuario.saldo
+            novoSaldo: usuarioAtualizado.saldo // Envia o novo saldo validado para o frontend (Falso Desconto Corrigido)
         });
 
     } catch (erro) {

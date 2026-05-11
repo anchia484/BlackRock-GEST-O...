@@ -94,13 +94,15 @@ router.post('/solicitar-recuperacao', async (req, res) => {
 // ATUALIZAR PERFIL / TROCAR SENHA
 router.put('/perfil/atualizar', auth, async (req, res) => {
     try {
-        const { nome, novaSenha, senhaAtual, carteiraPreferencial, numeroRecebimento, nomeTitularConta } = req.body;
+        // CORREÇÃO: Variável 'telefone' adicionada à extração
+        const { nome, telefone, novaSenha, senhaAtual, carteiraPreferencial, numeroRecebimento, nomeTitularConta } = req.body;
         const usuario = await User.findById(req.usuario.id);
 
         const senhaValida = await bcrypt.compare(senhaAtual, usuario.senha);
         if (!senhaValida) return res.status(401).json({ erro: 'Senha atual incorreta.' });
 
         if (nome) usuario.nome = nome;
+        if (telefone) usuario.telefone = telefone; // CORREÇÃO: O telefone agora é gravado na base de dados
         if (carteiraPreferencial) usuario.carteiraPreferencial = carteiraPreferencial;
         if (numeroRecebimento) usuario.numeroRecebimento = numeroRecebimento;
         if (nomeTitularConta) usuario.nomeTitularConta = nomeTitularConta;

@@ -4,27 +4,62 @@ const auth = require('./authMiddleware');
 const router = express.Router();
 
 // ==========================================
-// 1. ÁREA "EQUIPE" (Livre para todos os usuários)
+// 1. ÁREA "EQUIPE" (Sincronizada com o Frontend)
 // ==========================================
 router.get('/equipe', auth, async (req, res) => {
     try {
         const usuario = await User.findById(req.usuario.id);
         
-        const nivel1 = await User.find({ convidadoPor: usuario.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente meuCodigoConvite');
+        // Puxamos a data de criação (createdAt) para podermos ordenar
+        const nivel1 = await User.find({ convidadoPor: usuario.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente meuCodigoConvite createdAt');
         
         let nivel2 = [];
         for (let direto of nivel1) {
-            const indiretos = await User.find({ convidadoPor: direto.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente');
+            const indiretos = await User.find({ convidadoPor: direto.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente createdAt');
             nivel2.push(...indiretos);
         }
+
+        // ====================================================================
+        // 🚀 CORREÇÃO: UNIFICAÇÃO E FORMATAÇÃO (O Motor do Frontend)
+        // O frontend espera uma lista única chamada 'membros' para gerar a UI
+        // ====================================================================
+        const membrosUnificados = [];
+        
+        nivel1.forEach(m => {
+            membrosUnificados.push({
+                idUnico: m.idUnico,
+                nome: m.nome,
+                planoAtivo: m.planoAtivo,
+                isAgente: m.isAgente,
+                nivel: 1, // Identificador de geração (Direto)
+                status: m.planoAtivo !== 'Nenhum' ? 'ativo' : 'pendente',
+                dataRegisto: m.createdAt
+            });
+        });
+
+        nivel2.forEach(m => {
+            membrosUnificados.push({
+                idUnico: m.idUnico,
+                nome: m.nome,
+                planoAtivo: m.planoAtivo,
+                isAgente: m.isAgente,
+                nivel: 2, // Identificador de geração (Indireto)
+                status: m.planoAtivo !== 'Nenhum' ? 'ativo' : 'pendente',
+                dataRegisto: m.createdAt
+            });
+        });
+
+        // Ordenar do mais recente para o mais antigo
+        membrosUnificados.sort((a, b) => new Date(b.dataRegisto) - new Date(a.dataRegisto));
 
         res.json({
             codigoConvite: usuario.meuCodigoConvite,
             totalEquipe: nivel1.length + nivel2.length,
             diretos: nivel1.length,
             indiretos: nivel2.length,
-            membrosNivel1: nivel1,
-            membrosNivel2: nivel2
+            membros: membrosUnificados, // <-- A MATRIZ PERFEITA PARA O FRONTEND
+            membrosNivel1: nivel1,      // Mantido por segurança/retrocompatibilidade
+            membrosNivel2: nivel2       // Mantido por segurança/retrocompatibilidade
         });
 
     } catch (erro) {
