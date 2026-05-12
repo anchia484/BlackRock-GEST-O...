@@ -123,6 +123,26 @@ router.post('/saque', auth, async (req, res) => {
             return res.status(403).json({ erro: 'Saques desativados temporariamente pela Diretoria.' });
         }
 
+        // ====================================================================
+        // 🛡️ BLINDAGEM ADICIONAL: VALIDAÇÃO DE HORÁRIO COMERCIAL NO SERVIDOR
+        // ====================================================================
+        if (config.saqueAbre && config.saqueFecha) {
+            const agora = new Date();
+            // Calcula a hora decimal (ex: 14:30 = 14.5)
+            const horaAtual = agora.getHours() + (agora.getMinutes() / 60);
+            
+            const [hAbre, mAbre] = config.saqueAbre.split(':').map(Number);
+            const [hFecha, mFecha] = config.saqueFecha.split(':').map(Number);
+            
+            const tempoAbre = hAbre + ((mAbre || 0) / 60);
+            const tempoFecha = hFecha + ((mFecha || 0) / 60);
+            const diaSemana = agora.getDay(); // 0 = Domingo, 6 = Sábado
+
+            if (diaSemana === 0 || diaSemana === 6 || horaAtual < tempoAbre || horaAtual > tempoFecha) {
+                return res.status(403).json({ erro: 'Operação rejeitada: Levantamentos disponíveis apenas em dias úteis, dentro do horário de funcionamento.' });
+            }
+        }
+
         const limiteMinimo = config.saqueLimite || 200;
 
         if (valorSaqueBruto < limiteMinimo) {
