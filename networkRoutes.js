@@ -107,7 +107,7 @@ router.get('/painel-rede', auth, async (req, res) => {
         res.json({
             mensagem: 'Bem-vindo ao Painel de Rede Exclusivo!',
             statusAgente: 'ATIVO',
-            linkOficial: 'https://black-rock-ga.vercel.app/registro.html?convite=${usuario.meuCodigoConvite}`,
+            linkOficial: `https://black-rock-ga.vercel.app/registro.html?convite=${usuario.meuCodigoConvite}`,
             beneficios: ['Comissão de Tarefas (Desbloqueado)', 'Bônus de 1º Depósito da Equipe (Desbloqueado)']
         });
 
