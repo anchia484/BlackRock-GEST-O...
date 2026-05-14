@@ -2,6 +2,8 @@ const express = require('express');
 const Plan = require('./Plan');
 const User = require('./User');
 const Feed = require('./Feed');
+const Transaction = require('./Transaction');
+const System = require('./System');
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -25,9 +27,7 @@ router.post('/comprar', auth, async (req, res) => {
         const dataExpiracao = new Date();
         dataExpiracao.setDate(dataExpiracao.getDate() + diasDeDuracao);
 
-        // ====================================================================
-        // 1. DESCONTO E ATIVAÇÃO ATÔMICA (Bloqueia concorrência/Duplo gasto)
-        // ====================================================================
+        // 1. DESCONTO ATÔMICO DO USUÁRIO
         const usuario = await User.findOneAndUpdate(
             { _id: req.usuario.id, saldo: { $gte: precoDoPlano } },
             { 
@@ -42,40 +42,31 @@ router.post('/comprar', auth, async (req, res) => {
         );
 
         if (!usuario) {
-            return res.status(400).json({ erro: 'Saldo insuficiente ou requisição simultânea bloqueada por segurança.' });
+            return res.status(400).json({ erro: 'Saldo insuficiente ou requisição simultânea.' });
         }
 
-        // ====================================================================
-        // 2. MÁGICA DO BÔNUS DE 1º DEPÓSITO (SÓ PAGA 1 VEZ)
-        // ====================================================================
-        if (!usuario.primeiroPlanoComprado) { 
-            // Se ele tem um patrocinador
-            if (usuario.convidadoPor) {
-                const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
+        // 2. BÓNUS DE 1º DEPÓSITO/ATIVAÇÃO (PAGO APENAS 1 VEZ AQUI)
+        if (!usuario.primeiroPlanoComprado && usuario.convidadoPor) { 
+            const patrocinador = await User.findOne({ meuCodigoConvite: usuario.convidadoPor });
+            
+            if (patrocinador) {
+                const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
                 
-                if (patrocinador) {
-                    const expPatrocinador = patrocinador.dataExpiracaoPlano ? new Date(patrocinador.dataExpiracaoPlano) : new Date(0);
+                // Patrocinador Elegível?
+                if (expPatrocinador > new Date() && patrocinador.planoAtivo !== 'Nenhum') {
                     
-                    // Verifica se o patrocinador tem o plano ATIVO
-                    if (expPatrocinador > new Date()) {
-                        
-                        // MÁGICA: Vai buscar o bónus à Diretoria!
-                        const System = require('./System');
-                        const config = await System.findOne();
-                        
-                        let percentualBonus = 0.10; // Valor de segurança (10%)
-                        if (config && config.bonusRede !== undefined) {
-                            percentualBonus = config.bonusRede / 100;
-                        }
-                        const valorBonus = precoDoPlano * percentualBonus;
+                    // Busca a taxa do ADMIN
+                    const config = await System.findOne() || {};
+                    let percentualBonus = (config.bonusPrimeiroDep || config.bonusRede || 10) / 100; 
+                    
+                    const valorBonus = precoDoPlano * percentualBonus;
 
-                        // Paga ao Patrocinador
+                    if(valorBonus > 0) {
+                        // Atualiza Saldo Global e Saldo de Bônus Atômicamente
                         await User.findByIdAndUpdate(patrocinador._id, {
                             $inc: { saldo: valorBonus, saldoBonus: valorBonus }
                         });
 
-                        // Imprime o Recibo para o Patrocinador
-                        const Transaction = require('./Transaction');
                         await new Transaction({
                             usuarioId: patrocinador._id,
                             tipo: 'bonus_rede',
@@ -83,42 +74,30 @@ router.post('/comprar', auth, async (req, res) => {
                             status: 'concluido',
                             data: new Date()
                         }).save();
-                    } else {
-                        // PENALIDADE: O plano do patrocinador expirou! Corta o laço.
-                        usuario.convidadoPor = null; 
                     }
+                } else {
+                    usuario.convidadoPor = null; // Penalidade por estar inativo
                 }
             }
-            // Marca que o usuário já comprou o 1º plano para nunca mais pagar este bônus
             usuario.primeiroPlanoComprado = true; 
+            await usuario.save();
         }
 
-        // Salva as alterações da penalidade ou da marcação de primeiro plano
-        await usuario.save();
-
-        // ====================================================================
-        // 4. POST AUTOMÁTICO NO FEED (AGORA DENTRO DO LUGAR CERTO)
-        // ====================================================================
+        // 3. POST NO FEED
         try {
-            const postAuto = new Feed({
+            await new Feed({
                 titulo: 'Novo Investidor!',
                 mensagem: `O investidor ID ${usuario.idUnico || 'Anônimo'} acaba de ativar o node ${plano.nome}. 🚀`,
                 tipo: 'automatico',
                 autor: 'Sistema BlackRock'
-            });
-            await postAuto.save();
-        } catch (e) {
-            console.log("Feed não atualizado, mas compra feita com sucesso.");
-        }
+            }).save();
+        } catch (e) {}
 
-        // A RESPOSTA FINAL DE SUCESSO FICA AQUI, ANTES DE FECHAR O 'TRY'
         res.json({ mensagem: `Sucesso! Node ${plano.nome} ativo por ${diasDeDuracao} dias.`, user: usuario });
 
     } catch (erro) { 
-        // ESTE É O CATCH GERAL QUE FECHA A ROTA INTEIRA
-        console.error("Erro no processamento da compra:", erro);
         res.status(500).json({ erro: 'Erro interno na compra.' }); 
     }
-}); // FIM DA ROTA DE COMPRA
+});
 
 module.exports = router;
