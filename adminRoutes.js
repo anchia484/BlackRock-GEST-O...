@@ -31,6 +31,11 @@ router.post('/login', async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro no login.' }); }
 });
 
+const adminAuth = async (req, res, next) => {
+    if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Área restrita à Diretoria.' });
+    next();
+};
+
 // ==========================================
 // 1. DASHBOARD CORPORATIVO (ESCALABILIDADE EXTREMA)
 // ==========================================
