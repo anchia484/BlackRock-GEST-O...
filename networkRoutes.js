@@ -1,13 +1,37 @@
 const express = require('express');
 const User = require('./User');
-const Transaction = require('./Transaction'); // Necessário para calcular as comissões
+const Transaction = require('./Transaction'); 
 const auth = require('./authMiddleware');
 const router = express.Router();
 
 router.get('/equipe', auth, async (req, res) => {
     try {
-        const usuario = await User.findById(req.usuario.id);
+        let usuario = await User.findById(req.usuario.id);
         
+        // =================================================================
+        // 1. A GUILHOTINA: REGRA DE EXPIRAÇÃO DE PLANO (PERDA DE EQUIPA)
+        // Se o plano expirou, o líder perde TODOS os convidados para sempre.
+        // =================================================================
+        const agora = new Date();
+        const expPlano = usuario.dataExpiracaoPlano ? new Date(usuario.dataExpiracaoPlano) : null;
+        
+        if (expPlano && expPlano < agora) {
+            // Se ainda não estava marcado como "Nenhum", atualiza
+            if (usuario.planoAtivo !== 'Nenhum') {
+                usuario.planoAtivo = 'Nenhum';
+                await usuario.save();
+            }
+            
+            // CORTA A REDE: Todos os que foram convidados por ele perdem o vínculo
+            await User.updateMany(
+                { convidadoPor: usuario.meuCodigoConvite },
+                { $set: { convidadoPor: null } }
+            );
+        }
+
+        // =================================================================
+        // 2. BUSCA DA EQUIPA (Diretos e Indiretos)
+        // =================================================================
         const nivel1 = await User.find({ convidadoPor: usuario.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente meuCodigoConvite createdAt');
         
         let nivel2 = [];
@@ -16,13 +40,23 @@ router.get('/equipe', auth, async (req, res) => {
             nivel2.push(...indiretos);
         }
 
-        // CÁLCULO REAL DAS COMISSÕES (DESCONGELANDO O FRONTEND)
+        // =================================================================
+        // 3. CÁLCULO REAL DAS COMISSÕES GLOBAIS DA REDE
+        // Soma as tarefas diárias e os bónus de primeiro depósito
+        // =================================================================
         const somatorioComissoes = await Transaction.aggregate([
-            { $match: { usuarioId: usuario._id, tipo: 'bonus_rede', status: 'concluido' } },
+            { $match: { 
+                usuarioId: usuario._id, 
+                tipo: { $in: ['bonus_rede', 'comissao', 'bonus_deposito'] }, 
+                status: { $in: ['aprovado', 'concluido'] } 
+            }},
             { $group: { _id: null, total: { $sum: "$valor" } } }
         ]);
         const comissaoTotalCalculada = somatorioComissoes.length > 0 ? somatorioComissoes[0].total : 0;
 
+        // =================================================================
+        // 4. PREPARAÇÃO DA LISTA PARA O FRONTEND
+        // =================================================================
         const membrosUnificados = [];
         
         nivel1.forEach(m => {
@@ -45,12 +79,13 @@ router.get('/equipe', auth, async (req, res) => {
 
         membrosUnificados.sort((a, b) => new Date(b.dataRegisto) - new Date(a.dataRegisto));
 
+        // AS CHAVES AQUI AGORA ESTÃO PERFEITAMENTE ALINHADAS COM O FRONTEND
         res.json({
             codigoConvite: usuario.meuCodigoConvite,
-            totalEquipe: nivel1.length + nivel2.length,
+            totalConvidados: nivel1.length + nivel2.length, 
             diretos: nivel1.length,
             indiretos: nivel2.length,
-            comissaoRecebida: comissaoTotalCalculada, // VARIÁVEL VITAL INSERIDA AQUI!
+            comissaoTotal: comissaoTotalCalculada, 
             membros: membrosUnificados
         });
 
