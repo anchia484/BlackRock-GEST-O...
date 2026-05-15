@@ -25,15 +25,11 @@ router.post('/login', async (req, res) => {
         const senhaValida = await bcrypt.compare(senha, admin.senha);
         if (!senhaValida) return res.status(401).json({ erro: 'Senha incorreta.' });
 
-        const token = jwt.sign({ id: admin._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '8h' });
+        // 🚀 REGRA APLICADA: Sessão de Admin morre em exatos 30 minutos
+        const token = jwt.sign({ id: admin._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '30m' });
         res.json({ token, admin: { nome: admin.nome, id: admin.idUnico } });
     } catch (e) { res.status(500).json({ erro: 'Erro no login.' }); }
 });
-
-const adminAuth = async (req, res, next) => {
-    if (!req.usuario.isAdmin) return res.status(403).json({ erro: 'Área restrita à Diretoria.' });
-    next();
-};
 
 // ==========================================
 // 1. DASHBOARD CORPORATIVO (ESCALABILIDADE EXTREMA)

@@ -68,7 +68,8 @@ router.post('/login', async (req, res) => {
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
 
-        const token = jwt.sign({ id: usuario._id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+        // 🚀 REGRA APLICADA: O Token do usuário morre em exatos 20 minutos
+        const token = jwt.sign({ id: usuario._id }, process.env.JWT_SECRET, { expiresIn: '20m' });
         
         res.json({ 
             token, 
@@ -94,7 +95,6 @@ router.post('/solicitar-recuperacao', async (req, res) => {
 // ATUALIZAR PERFIL / TROCAR SENHA
 router.put('/perfil/atualizar', auth, async (req, res) => {
     try {
-        // CORREÇÃO: Variável 'telefone' adicionada à extração
         const { nome, telefone, novaSenha, senhaAtual, carteiraPreferencial, numeroRecebimento, nomeTitularConta } = req.body;
         const usuario = await User.findById(req.usuario.id);
 
@@ -102,7 +102,7 @@ router.put('/perfil/atualizar', auth, async (req, res) => {
         if (!senhaValida) return res.status(401).json({ erro: 'Senha atual incorreta.' });
 
         if (nome) usuario.nome = nome;
-        if (telefone) usuario.telefone = telefone; // CORREÇÃO: O telefone agora é gravado na base de dados
+        if (telefone) usuario.telefone = telefone; 
         if (carteiraPreferencial) usuario.carteiraPreferencial = carteiraPreferencial;
         if (numeroRecebimento) usuario.numeroRecebimento = numeroRecebimento;
         if (nomeTitularConta) usuario.nomeTitularConta = nomeTitularConta;
