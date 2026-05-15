@@ -27,7 +27,7 @@ router.get('/dashboard', auth, async (req, res) => {
             planoDetails = await Plan.findOne({ nome: usuario.planoAtivo });
         }
 
-        // 4. MOTOR DE MATEMÁTICA TEMPORAL (Ganhos Isolados)
+        // 4. MOTOR DE MATEMÁTICA TEMPORAL (Ganhos Isolados + Soma de Bónus)
         const agora = new Date();
         const inicioHoje = new Date(agora).setHours(0, 0, 0, 0);
         const inicioSemana = new Date(agora);
@@ -35,28 +35,36 @@ router.get('/dashboard', auth, async (req, res) => {
         inicioSemana.setHours(0, 0, 0, 0);
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
-        // Busca apenas transações aprovadas deste usuário específico
+        // Busca transações de lucro e todos os tipos de bónus
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
-            tipo: { $in: ['ganho_tarefa', 'bonus_rede'] },
+            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito'] },
             status: { $in: ['aprovado', 'concluido'] }
         });
 
         let ganhosHoje = 0, ganhosSemana = 0, ganhosMes = 0, ganhosTotal = 0;
+        let historicoBonusTotal = 0; // 🚀 VARIÁVEL PARA O CAMPO CENTRAL DO DASHBOARD
 
         transacoesLucro.forEach(t => {
             const dataT = new Date(t.createdAt).getTime();
             const valor = Number(t.valor) || 0;
+            
+            // Soma para os totais de rendimento
             ganhosTotal += valor;
             if (dataT >= inicioMes) ganhosMes += valor;
             if (dataT >= inicioSemana) ganhosSemana += valor;
             if (dataT >= inicioHoje) ganhosHoje += valor;
+
+            // 🚀 SEPARAÇÃO PARA O CONTADOR DE BÓNUS (Soma tudo o que veio da rede/equipa)
+            if (t.tipo === 'bonus_rede' || t.tipo === 'comissao' || t.tipo === 'bonus_deposito') {
+                historicoBonusTotal += valor;
+            }
         });
 
         // 5. MOTOR DE EQUIPA (Contagem Isolada de Convidados)
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
 
-        // 6. RESPOSTA CONSOLIDADA (A Muralha de Isolamento)
+        // 6. RESPOSTA CONSOLIDADA (Incluindo o novo campo 'bonus')
         res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
@@ -65,7 +73,8 @@ router.get('/dashboard', auth, async (req, res) => {
                 hoje: ganhosHoje,
                 semana: ganhosSemana,
                 mes: ganhosMes,
-                total: ganhosTotal
+                total: ganhosTotal,
+                bonus: historicoBonusTotal // 🚀 ESTE VALOR VAI PARA O "BÓNUS" NO DASHBOARD
             },
             equipa: {
                 totalMembros: tamanhoEquipa
@@ -79,7 +88,7 @@ router.get('/dashboard', auth, async (req, res) => {
 });
 
 // =====================================================================
-// CHECKLIST DE REQUISITOS (DINÂMICO PELO ADMIN)
+// CHECKLIST DE REQUISITOS (DINÂMICO PELO ADMIN) - ORIGINAL MANTIDO
 // =====================================================================
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
