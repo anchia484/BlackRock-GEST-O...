@@ -103,10 +103,30 @@ router.get('/dashboard', auth, async (req, res) => {
         // 5. MOTOR DE EQUIPA
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
 
-        // 6. SENSOR DO MERCADO PREMIUM
+// 6. SENSOR DO MERCADO PREMIUM
         const configMercado = await MarketConfig.findOne();
         const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
+        // 🚀 ADICIONAMOS A HORA DO FECHO PARA O DASHBOARD LER
+        const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
 
+        // 7. RESPOSTA CONSOLIDADA
+        res.json({ 
+            user: usuario, 
+            unreadNotifications: totalNotificacoes,
+            planoDetails: planoDetails,
+            isMercadoAberto: mercadoAtivo,
+            dataFechamentoMercado: dataFechoMercado, // 🚀 ENVIANDO A HORA!
+            ganhos: {
+                hoje: ganhosHoje,
+                semana: ganhosSemana,
+                mes: ganhosMes,
+                total: ganhosTotal,
+                bonus: historicoBonusTotal 
+            },
+            equipa: {
+                totalMembros: tamanhoEquipa
+            }
+        });
         // 7. RESPOSTA CONSOLIDADA
         res.json({ 
             user: usuario, 
