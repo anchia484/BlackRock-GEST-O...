@@ -5,26 +5,18 @@ const Plan = require('./Plan');
 const Transaction = require('./Transaction'); 
 const Notification = require('./Notification');
 const Requirement = require('./Requirement');
-// IMPORTAÇÕES DO MERCADO PREMIUM
 const MarketContract = require('./MarketContract');
 const MarketConfig = require('./MarketConfig');
 const auth = require('./authMiddleware');
 
-// =====================================================================
-// ROTA DO DASHBOARD: CARREGA PERFIL, NOTIFICAÇÕES, PLANO E ESTATÍSTICAS
-// =====================================================================
 router.get('/dashboard', auth, async (req, res) => {
     try {
         const userId = req.usuario.id || req.usuario._id;
-
-        // 1. Busca os dados do utilizador
         const usuario = await User.findById(userId).select('-senha');
+        
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
-        // =====================================================================
-        // 🚀 O "MECANISMO DE PREGUIÇA" (LAZY VALIDATION) DO MERCADO PREMIUM
-        // Verifica se há contratos expirados para libertar o lucro.
-        // =====================================================================
+        // LAZY VALIDATION DO MERCADO
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
             usuarioId: userId,
@@ -34,14 +26,10 @@ router.get('/dashboard', auth, async (req, res) => {
 
         if (contratosConcluidos.length > 0) {
             for (let contrato of contratosConcluidos) {
-                // 1. Injeta o capital + lucro no saldo principal
                 usuario.saldo += contrato.valorRetorno;
-                
-                // 2. Marca o contrato como finalizado
                 contrato.status = 'concluido';
                 await contrato.save();
 
-                // 3. Regista o pagamento no extrato/histórico
                 await new Transaction({
                     usuarioId: usuario._id,
                     nomeUsuario: usuario.nome,
@@ -54,29 +42,22 @@ router.get('/dashboard', auth, async (req, res) => {
                     idTransacaoBancaria: 'MKT-RET-' + Date.now()
                 }).save();
             }
-            // Salva o novo saldo do utilizador
             await usuario.save();
         }
 
-        // =====================================================================
-
-        // 2. Contagem de Notificações Individuais
         const totalNotificacoes = await Notification.countDocuments({ usuarioId: userId, lida: false });
 
-        // 3. Detalhes do Plano para a Barra de Progresso
         let planoDetails = null;
         if (usuario.planoAtivo && usuario.planoAtivo !== 'Nenhum') {
             planoDetails = await Plan.findOne({ nome: usuario.planoAtivo });
         }
 
-        // 4. MOTOR DE MATEMÁTICA TEMPORAL (Ganhos Isolados + Soma de Bónus)
         const inicioHoje = new Date(agora).setHours(0, 0, 0, 0);
         const inicioSemana = new Date(agora);
         inicioSemana.setDate(agora.getDate() - agora.getDay());
         inicioSemana.setHours(0, 0, 0, 0);
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
-        // Busca transações de lucro, bónus e os retornos do mercado
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
             tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito', 'retorno_mercado'] },
@@ -100,39 +81,19 @@ router.get('/dashboard', auth, async (req, res) => {
             }
         });
 
-        // 5. MOTOR DE EQUIPA
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
 
-// 6. SENSOR DO MERCADO PREMIUM
         const configMercado = await MarketConfig.findOne();
         const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
-        // 🚀 ADICIONAMOS A HORA DO FECHO PARA O DASHBOARD LER
         const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
 
-        // 7. RESPOSTA CONSOLIDADA
-        res.json({ 
+        // 🚀 O 'return' AQUI IMPEDE O SERVIDOR DE CRASHAR
+        return res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
             planoDetails: planoDetails,
             isMercadoAberto: mercadoAtivo,
-            dataFechamentoMercado: dataFechoMercado, // 🚀 ENVIANDO A HORA!
-            ganhos: {
-                hoje: ganhosHoje,
-                semana: ganhosSemana,
-                mes: ganhosMes,
-                total: ganhosTotal,
-                bonus: historicoBonusTotal 
-            },
-            equipa: {
-                totalMembros: tamanhoEquipa
-            }
-        });
-        // 7. RESPOSTA CONSOLIDADA
-        res.json({ 
-            user: usuario, 
-            unreadNotifications: totalNotificacoes,
-            planoDetails: planoDetails,
-            isMercadoAberto: mercadoAtivo, // O FRONTEND PRECISA DISTO!
+            dataFechamentoMercado: dataFechoMercado,
             ganhos: {
                 hoje: ganhosHoje,
                 semana: ganhosSemana,
@@ -147,13 +108,10 @@ router.get('/dashboard', auth, async (req, res) => {
 
     } catch (erro) { 
         console.error("Erro no motor do Dashboard:", erro);
-        res.status(500).json({ erro: 'Falha na sincronização do Terminal.' }); 
+        return res.status(500).json({ erro: 'Falha na sincronização do Terminal.' }); 
     }
 });
 
-// =====================================================================
-// CHECKLIST DE REQUISITOS (DINÂMICO PELO ADMIN)
-// =====================================================================
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
         const u = await User.findById(req.usuario.id);
@@ -190,9 +148,9 @@ router.get('/requisitos-bonus', auth, async (req, res) => {
         const concluidos = requisitosFormados.filter(r => r.status === 'concluido').length;
         const progressoGeral = requisitosFormados.length > 0 ? Math.round((concluidos / requisitosFormados.length) * 100) : 100;
 
-        res.json({ progressoGeral, requisitos: requisitosFormados });
+        return res.json({ progressoGeral, requisitos: requisitosFormados });
     } catch (e) { 
-        res.status(500).json({ erro: 'Erro ao processar as regras.' }); 
+        return res.status(500).json({ erro: 'Erro ao processar as regras.' }); 
     }
 });
 
