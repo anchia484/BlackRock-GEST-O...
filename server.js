@@ -37,6 +37,8 @@ app.use('/api/planos', planRoutes);
 app.use('/api/tarefas', taskRoutes);
 app.use('/api/rede', networkRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin-mercado', require('./adminMercadoRoutes'));
+app.use('/api/mercado', require('./mercadoRoutes'));
 app.use('/api/feed', feedRoutes); 
 app.use('/api/suporte', supportRoutes);
 app.use('/api/sistema', systemRoutes);

@@ -5,6 +5,9 @@ const Plan = require('./Plan');
 const Transaction = require('./Transaction'); 
 const Notification = require('./Notification');
 const Requirement = require('./Requirement');
+// IMPORTAÇÕES DO MERCADO PREMIUM
+const MarketContract = require('./MarketContract');
+const MarketConfig = require('./MarketConfig');
 const auth = require('./authMiddleware');
 
 // =====================================================================
@@ -14,9 +17,48 @@ router.get('/dashboard', auth, async (req, res) => {
     try {
         const userId = req.usuario.id || req.usuario._id;
 
-        // 1. Busca os dados do utilizador (Isolamento por ID do Token)
+        // 1. Busca os dados do utilizador
         const usuario = await User.findById(userId).select('-senha');
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
+
+        // =====================================================================
+        // 🚀 O "MECANISMO DE PREGUIÇA" (LAZY VALIDATION) DO MERCADO PREMIUM
+        // Verifica se há contratos expirados para libertar o lucro.
+        // =====================================================================
+        const agora = new Date();
+        const contratosConcluidos = await MarketContract.find({
+            usuarioId: userId,
+            status: 'ativo',
+            dataFim: { $lte: agora }
+        });
+
+        if (contratosConcluidos.length > 0) {
+            for (let contrato of contratosConcluidos) {
+                // 1. Injeta o capital + lucro no saldo principal
+                usuario.saldo += contrato.valorRetorno;
+                
+                // 2. Marca o contrato como finalizado
+                contrato.status = 'concluido';
+                await contrato.save();
+
+                // 3. Regista o pagamento no extrato/histórico
+                await new Transaction({
+                    usuarioId: usuario._id,
+                    nomeUsuario: usuario.nome,
+                    idUnicoUsuario: usuario.idUnico,
+                    telefoneUsuario: usuario.telefone,
+                    tipo: 'retorno_mercado',
+                    valor: contrato.valorRetorno,
+                    status: 'concluido',
+                    operadora: 'BlackRock Premium',
+                    idTransacaoBancaria: 'MKT-RET-' + Date.now()
+                }).save();
+            }
+            // Salva o novo saldo do utilizador
+            await usuario.save();
+        }
+
+        // =====================================================================
 
         // 2. Contagem de Notificações Individuais
         const totalNotificacoes = await Notification.countDocuments({ usuarioId: userId, lida: false });
@@ -28,53 +70,55 @@ router.get('/dashboard', auth, async (req, res) => {
         }
 
         // 4. MOTOR DE MATEMÁTICA TEMPORAL (Ganhos Isolados + Soma de Bónus)
-        const agora = new Date();
         const inicioHoje = new Date(agora).setHours(0, 0, 0, 0);
         const inicioSemana = new Date(agora);
         inicioSemana.setDate(agora.getDate() - agora.getDay());
         inicioSemana.setHours(0, 0, 0, 0);
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
-        // Busca transações de lucro e todos os tipos de bónus
+        // Busca transações de lucro, bónus e os retornos do mercado
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
-            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito'] },
+            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito', 'retorno_mercado'] },
             status: { $in: ['aprovado', 'concluido'] }
         });
 
         let ganhosHoje = 0, ganhosSemana = 0, ganhosMes = 0, ganhosTotal = 0;
-        let historicoBonusTotal = 0; // 🚀 VARIÁVEL PARA O CAMPO CENTRAL DO DASHBOARD
+        let historicoBonusTotal = 0; 
 
         transacoesLucro.forEach(t => {
             const dataT = new Date(t.createdAt).getTime();
             const valor = Number(t.valor) || 0;
             
-            // Soma para os totais de rendimento
             ganhosTotal += valor;
             if (dataT >= inicioMes) ganhosMes += valor;
             if (dataT >= inicioSemana) ganhosSemana += valor;
             if (dataT >= inicioHoje) ganhosHoje += valor;
 
-            // 🚀 SEPARAÇÃO PARA O CONTADOR DE BÓNUS (Soma tudo o que veio da rede/equipa)
             if (t.tipo === 'bonus_rede' || t.tipo === 'comissao' || t.tipo === 'bonus_deposito') {
                 historicoBonusTotal += valor;
             }
         });
 
-        // 5. MOTOR DE EQUIPA (Contagem Isolada de Convidados)
+        // 5. MOTOR DE EQUIPA
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
 
-        // 6. RESPOSTA CONSOLIDADA (Incluindo o novo campo 'bonus')
+        // 6. SENSOR DO MERCADO PREMIUM
+        const configMercado = await MarketConfig.findOne();
+        const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
+
+        // 7. RESPOSTA CONSOLIDADA
         res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
             planoDetails: planoDetails,
+            isMercadoAberto: mercadoAtivo, // O FRONTEND PRECISA DISTO!
             ganhos: {
                 hoje: ganhosHoje,
                 semana: ganhosSemana,
                 mes: ganhosMes,
                 total: ganhosTotal,
-                bonus: historicoBonusTotal // 🚀 ESTE VALOR VAI PARA O "BÓNUS" NO DASHBOARD
+                bonus: historicoBonusTotal 
             },
             equipa: {
                 totalMembros: tamanhoEquipa
@@ -88,7 +132,7 @@ router.get('/dashboard', auth, async (req, res) => {
 });
 
 // =====================================================================
-// CHECKLIST DE REQUISITOS (DINÂMICO PELO ADMIN) - ORIGINAL MANTIDO
+// CHECKLIST DE REQUISITOS (DINÂMICO PELO ADMIN)
 // =====================================================================
 router.get('/requisitos-bonus', auth, async (req, res) => {
     try {
