@@ -16,7 +16,7 @@ router.get('/dashboard', auth, async (req, res) => {
         
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
-        // LAZY VALIDATION DO MERCADO
+        // LAZY VALIDATION DO MERCADO (Liberta o lucro automaticamente)
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
             usuarioId: userId,
@@ -87,6 +87,10 @@ router.get('/dashboard', auth, async (req, res) => {
         const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
         const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
 
+        // 🚀 AQUI ESTÁ A CORREÇÃO QUE FALTAVA NO SEU CÓDIGO (PASSE LIVRE)
+        const contratosEmAndamento = await MarketContract.countDocuments({ usuarioId: userId, status: 'ativo' });
+        const temContratoMercadoAtivo = contratosEmAndamento > 0;
+
         // 🚀 O 'return' AQUI IMPEDE O SERVIDOR DE CRASHAR
         return res.json({ 
             user: usuario, 
@@ -94,6 +98,7 @@ router.get('/dashboard', auth, async (req, res) => {
             planoDetails: planoDetails,
             isMercadoAberto: mercadoAtivo,
             dataFechamentoMercado: dataFechoMercado,
+            temContratoMercadoAtivo: temContratoMercadoAtivo, // Avisa o Dashboard para não apagar o botão
             ganhos: {
                 hoje: ganhosHoje,
                 semana: ganhosSemana,
