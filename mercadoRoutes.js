@@ -12,9 +12,19 @@ const auth = require('./authMiddleware');
 // ==========================================
 router.get('/vitrine', auth, async (req, res) => {
     try {
-        const config = await MarketConfig.findOne();
+        let config = await MarketConfig.findOne();
+        const agora = new Date();
         
-        // Se o mercado estiver fechado, nem adianta mostrar os produtos
+        // 🚀 GUILHOTINA DO TEMPO: FECHAMENTO REAL AUTOMÁTICO
+        if (config && config.isMercadoAberto && config.dataFechamento) {
+            if (agora >= new Date(config.dataFechamento)) {
+                // O tempo esgotou! Fecha o mercado e oculta os produtos instantaneamente
+                config.isMercadoAberto = false;
+                await config.save();
+                await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
+            }
+        }
+
         if (!config || !config.isMercadoAberto) {
             return res.json({ isMercadoAberto: false, produtos: [], dataFechamento: null });
         }
@@ -31,7 +41,7 @@ router.get('/vitrine', auth, async (req, res) => {
 });
 
 // ==========================================
-// 2. O MOTOR DE COMPRA (TRANSAÇÃO ATÓMICA)
+// 2. O MOTOR DE COMPRA (TRANSAÇÃO ATÓMICA E CONTRATO ÚNICO)
 // ==========================================
 router.post('/investir', auth, async (req, res) => {
     try {
@@ -39,12 +49,26 @@ router.post('/investir', auth, async (req, res) => {
         const valor = Number(valorAplicado);
         const usuarioId = req.usuario.id;
 
-        // 1. Validações Iniciais
         if (!valor || valor <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
-        const config = await MarketConfig.findOne();
+        let config = await MarketConfig.findOne();
+        
+        // 🚀 VERIFICAÇÃO DE FECHO NO MOMENTO DO CLIQUE
+        if (config && config.isMercadoAberto && config.dataFechamento && new Date() >= new Date(config.dataFechamento)) {
+            config.isMercadoAberto = false;
+            await config.save();
+            await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
+            return res.status(403).json({ erro: 'O tempo esgotou! O mercado acabou de fechar.' });
+        }
+
         if (!config || !config.isMercadoAberto) {
             return res.status(403).json({ erro: 'O Mercado Estratégico está fechado no momento.' });
+        }
+
+        // 🚀 REGRA DE OURO: CONTRATO ÚNICO
+        const contratoExistente = await MarketContract.findOne({ usuarioId: usuarioId, status: 'ativo' });
+        if (contratoExistente) {
+            return res.status(400).json({ erro: 'Você já possui um contrato estratégico ativo. É permitido apenas um por ciclo!' });
         }
 
         const produto = await MarketProduct.findById(produtoId);
@@ -52,7 +76,6 @@ router.post('/investir', auth, async (req, res) => {
             return res.status(404).json({ erro: 'Produto indisponível.' });
         }
 
-        // 2. Validações de Regras do Produto
         if (valor < produto.valorMinimo) {
             return res.status(400).json({ erro: `A aplicação mínima para este contrato é de ${produto.valorMinimo} MZN.` });
         }
@@ -63,21 +86,19 @@ router.post('/investir', auth, async (req, res) => {
             return res.status(400).json({ erro: 'As vagas para este contrato já esgotaram!' });
         }
 
-        // 3. Validação de Saldo do Utilizador
         const usuario = await User.findById(usuarioId);
         if (usuario.saldo < valor) {
             return res.status(400).json({ erro: 'Saldo insuficiente para realizar esta operação.' });
         }
 
-        // 4. MATEMÁTICA: Calculando Lucro e Tempo
         const lucroCalculado = valor * (produto.retornoPercentual / 100);
         const valorRetornoTotal = valor + lucroCalculado;
         
         const dataInicio = new Date();
         const dataFim = new Date(dataInicio.getTime() + (produto.duracaoDias * 24 * 60 * 60 * 1000));
 
-        // 5. EXECUÇÃO FINANCEIRA (Debitar, Registar e Criar Contrato)
-        usuario.saldo -= valor; // Debita o saldo principal
+        // EXECUÇÃO FINANCEIRA
+        usuario.saldo -= valor; 
         await usuario.save();
 
         produto.participantesAtuais += 1;
@@ -97,7 +118,6 @@ router.post('/investir', auth, async (req, res) => {
         });
         await novoContrato.save();
 
-        // Registo no histórico global
         await new Transaction({
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
@@ -110,7 +130,7 @@ router.post('/investir', auth, async (req, res) => {
             idTransacaoBancaria: 'MKT-' + Date.now()
         }).save();
 
-        res.json({ mensagem: 'Investimento realizado com sucesso! O seu capital está agora a gerar lucros.', contrato: novoContrato });
+        res.json({ mensagem: 'Contrato Assinado com Sucesso! O seu capital está agora protegido e a gerar lucros.', contrato: novoContrato });
 
     } catch (e) { res.status(500).json({ erro: 'Falha crítica ao processar o investimento.' }); }
 });
@@ -123,6 +143,34 @@ router.get('/meus-contratos', auth, async (req, res) => {
         const contratos = await MarketContract.find({ usuarioId: req.usuario.id }).sort({ createdAt: -1 });
         res.json(contratos);
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar os seus contratos.' }); }
+});
+
+// ==========================================
+// 4. MOTOR DO FEED VIVO (INTELIGÊNCIA DE DADOS)
+// ==========================================
+router.get('/feed-vivo', auth, async (req, res) => {
+    try {
+        const config = await MarketConfig.findOne();
+        if (!config || !config.isMercadoAberto) {
+            return res.json({ mercadoAberto: false, feedReal: [], nomesProdutos: [] });
+        }
+
+        // Puxa os nomes reais dos produtos que a Diretoria criou para alimentar o simulador
+        const produtosAtivos = await MarketProduct.find({ status: 'ativo' }).select('nome');
+        const nomesProdutos = produtosAtivos.map(p => p.nome);
+
+        // Puxa as últimas 5 compras REAIS para dar vida ao feed
+        const ultimosContratos = await MarketContract.find({ status: 'ativo' })
+            .sort({ createdAt: -1 })
+            .limit(5)
+            .select('idUnicoUsuario nomeProduto valorAplicado createdAt');
+
+        res.json({ 
+            mercadoAberto: true, 
+            feedReal: ultimosContratos, 
+            nomesProdutos: nomesProdutos 
+        });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao processar dados do Feed.' }); }
 });
 
 module.exports = router;
