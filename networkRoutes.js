@@ -16,13 +16,12 @@ router.get('/equipe', auth, async (req, res) => {
         const expPlano = usuario.dataExpiracaoPlano ? new Date(usuario.dataExpiracaoPlano) : null;
         
         if (expPlano && expPlano < agora) {
-            // Se ainda não estava marcado como "Nenhum", atualiza
             if (usuario.planoAtivo !== 'Nenhum') {
                 usuario.planoAtivo = 'Nenhum';
                 await usuario.save();
             }
             
-            // CORTA A REDE: Todos os que foram convidados por ele perdem o vínculo
+            // CORTA A REDE CIRURGICAMENTE
             await User.updateMany(
                 { convidadoPor: usuario.meuCodigoConvite },
                 { $set: { convidadoPor: null } }
@@ -30,19 +29,18 @@ router.get('/equipe', auth, async (req, res) => {
         }
 
         // =================================================================
-        // 2. BUSCA DA EQUIPA (Diretos e Indiretos)
+        // 2. BUSCA DA EQUIPA OTIMIZADA (FIM DO N+1 QUERY PROBLEM)
         // =================================================================
-        const nivel1 = await User.find({ convidadoPor: usuario.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente meuCodigoConvite createdAt');
+        const nivel1 = await User.find({ convidadoPor: usuario.meuCodigoConvite })
+            .select('idUnico nome planoAtivo isAgente meuCodigoConvite createdAt dataExpiracaoPlano');
         
-        let nivel2 = [];
-        for (let direto of nivel1) {
-            const indiretos = await User.find({ convidadoPor: direto.meuCodigoConvite }).select('idUnico nome planoAtivo isAgente createdAt');
-            nivel2.push(...indiretos);
-        }
+        // Busca todos os Nível 2 de UMA SÓ VEZ usando $in (Poupa 99% da memória RAM)
+        const codigosN1 = nivel1.map(u => u.meuCodigoConvite).filter(Boolean);
+        const nivel2 = await User.find({ convidadoPor: { $in: codigosN1 } })
+            .select('idUnico nome planoAtivo isAgente createdAt dataExpiracaoPlano');
 
         // =================================================================
         // 3. CÁLCULO REAL DAS COMISSÕES GLOBAIS DA REDE
-        // Soma as tarefas diárias e os bónus de primeiro depósito
         // =================================================================
         const somatorioComissoes = await Transaction.aggregate([
             { $match: { 
@@ -55,15 +53,21 @@ router.get('/equipe', auth, async (req, res) => {
         const comissaoTotalCalculada = somatorioComissoes.length > 0 ? somatorioComissoes[0].total : 0;
 
         // =================================================================
-        // 4. PREPARAÇÃO DA LISTA PARA O FRONTEND
+        // 4. PREPARAÇÃO DA LISTA COM STATUS REAL
         // =================================================================
+        const avaliarStatus = (m) => {
+            if (m.planoAtivo === 'Nenhum') return 'pendente';
+            if (m.dataExpiracaoPlano && new Date(m.dataExpiracaoPlano) < agora) return 'expirado';
+            return 'ativo';
+        };
+
         const membrosUnificados = [];
         
         nivel1.forEach(m => {
             membrosUnificados.push({
                 idUnico: m.idUnico, nome: m.nome, planoAtivo: m.planoAtivo,
                 isAgente: m.isAgente, nivel: 1, 
-                status: m.planoAtivo !== 'Nenhum' ? 'ativo' : 'pendente',
+                status: avaliarStatus(m),
                 dataRegisto: m.createdAt
             });
         });
@@ -72,14 +76,13 @@ router.get('/equipe', auth, async (req, res) => {
             membrosUnificados.push({
                 idUnico: m.idUnico, nome: m.nome, planoAtivo: m.planoAtivo,
                 isAgente: m.isAgente, nivel: 2, 
-                status: m.planoAtivo !== 'Nenhum' ? 'ativo' : 'pendente',
+                status: avaliarStatus(m),
                 dataRegisto: m.createdAt
             });
         });
 
         membrosUnificados.sort((a, b) => new Date(b.dataRegisto) - new Date(a.dataRegisto));
 
-        // AS CHAVES AQUI AGORA ESTÃO PERFEITAMENTE ALINHADAS COM O FRONTEND
         res.json({
             codigoConvite: usuario.meuCodigoConvite,
             totalConvidados: nivel1.length + nivel2.length, 

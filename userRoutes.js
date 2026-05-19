@@ -16,7 +16,9 @@ router.get('/dashboard', auth, async (req, res) => {
         
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
-        // LAZY VALIDATION DO MERCADO (Liberta o lucro automaticamente)
+        // =================================================================
+        // 🚀 LAZY VALIDATION BLINDADA (PREVENÇÃO DE DUPLO GASTO / RACE CONDITION)
+        // =================================================================
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
             usuarioId: userId,
@@ -26,23 +28,35 @@ router.get('/dashboard', auth, async (req, res) => {
 
         if (contratosConcluidos.length > 0) {
             for (let contrato of contratosConcluidos) {
-                usuario.saldo += contrato.valorRetorno;
-                contrato.status = 'concluido';
-                await contrato.save();
+                // 🛡️ TRANSAÇÃO ATÓMICA: Tranca e muda o status. Só avança se ninguém mais tocou.
+                const contratoSelado = await MarketContract.findOneAndUpdate(
+                    { _id: contrato._id, status: 'ativo' }, 
+                    { $set: { status: 'concluido' } },
+                    { new: true }
+                );
 
-                await new Transaction({
-                    usuarioId: usuario._id,
-                    nomeUsuario: usuario.nome,
-                    idUnicoUsuario: usuario.idUnico,
-                    telefoneUsuario: usuario.telefone,
-                    tipo: 'retorno_mercado',
-                    valor: contrato.valorRetorno,
-                    status: 'concluido',
-                    operadora: 'BlackRock Premium',
-                    idTransacaoBancaria: 'MKT-RET-' + Date.now()
-                }).save();
+                // Se o contrato foi selado com sucesso nesta exata fração de segundo, injeta o dinheiro
+                if (contratoSelado) {
+                    await User.findByIdAndUpdate(userId, {
+                        $inc: { saldo: contratoSelado.valorRetorno }
+                    });
+
+                    await new Transaction({
+                        usuarioId: usuario._id,
+                        nomeUsuario: usuario.nome,
+                        idUnicoUsuario: usuario.idUnico,
+                        telefoneUsuario: usuario.telefone,
+                        tipo: 'retorno_mercado', 
+                        valor: contratoSelado.valorRetorno,
+                        status: 'concluido',
+                        operadora: 'BlackRock Premium',
+                        idTransacaoBancaria: 'MKT-RET-' + Date.now()
+                    }).save();
+
+                    // Atualiza a memória local para o Dashboard refletir imediatamente
+                    usuario.saldo += contratoSelado.valorRetorno; 
+                }
             }
-            await usuario.save();
         }
 
         const totalNotificacoes = await Notification.countDocuments({ usuarioId: userId, lida: false });
@@ -87,28 +101,18 @@ router.get('/dashboard', auth, async (req, res) => {
         const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
         const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
 
-        // 🚀 AQUI ESTÁ A CORREÇÃO QUE FALTAVA NO SEU CÓDIGO (PASSE LIVRE)
         const contratosEmAndamento = await MarketContract.countDocuments({ usuarioId: userId, status: 'ativo' });
         const temContratoMercadoAtivo = contratosEmAndamento > 0;
 
-        // 🚀 O 'return' AQUI IMPEDE O SERVIDOR DE CRASHAR
         return res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
             planoDetails: planoDetails,
             isMercadoAberto: mercadoAtivo,
             dataFechamentoMercado: dataFechoMercado,
-            temContratoMercadoAtivo: temContratoMercadoAtivo, // Avisa o Dashboard para não apagar o botão
-            ganhos: {
-                hoje: ganhosHoje,
-                semana: ganhosSemana,
-                mes: ganhosMes,
-                total: ganhosTotal,
-                bonus: historicoBonusTotal 
-            },
-            equipa: {
-                totalMembros: tamanhoEquipa
-            }
+            temContratoMercadoAtivo: temContratoMercadoAtivo,
+            ganhos: { hoje: ganhosHoje, semana: ganhosSemana, mes: ganhosMes, total: ganhosTotal, bonus: historicoBonusTotal },
+            equipa: { totalMembros: tamanhoEquipa }
         });
 
     } catch (erro) { 

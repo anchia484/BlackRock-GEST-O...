@@ -1,12 +1,11 @@
 const express = require('express');
 const Feed = require('./Feed');
-const auth = require('./authMiddleware'); // <-- ESTA É A LINHA QUE FALTAVA PARA RESOLVER O ERRO
+const auth = require('./authMiddleware'); 
 const router = express.Router();
 
 // 1. BUSCAR FEED (Fixados primeiro, depois por data)
 router.get('/', async (req, res) => {
     try {
-        // Ordena por isFixado (true primeiro) e depois por data de criação (mais novos)
         const posts = await Feed.find().sort({ isFixado: -1, createdAt: -1 });
         res.json(posts);
     } catch (erro) {
@@ -14,27 +13,37 @@ router.get('/', async (req, res) => {
     }
 });
 
-// 2. REAÇÃO DE LIKE (❤️) COM TOGGLE PERMANENTE
+// 2. REAÇÃO DE LIKE (❤️) BLINDADA CONTRA SPAM / RACE CONDITION
 router.post('/:id/like', auth, async (req, res) => {
     try {
-        const post = await Feed.findById(req.params.id);
         const userId = req.usuario.id;
-        
-        // Verifica se o utilizador já curtiu
-        const index = post.curtidas.indexOf(userId);
+        const postId = req.params.id;
 
-        if (index === -1) {
-            // Se não curtiu, adiciona o ID e aumenta
-            post.curtidas.push(userId);
-            post.reacoes = post.curtidas.length;
-        } else {
-            // Se já curtiu, remove o ID e diminui
-            post.curtidas.splice(index, 1);
-            post.reacoes = post.curtidas.length;
+        // 🛡️ TENTATIVA 1: Adicionar Like Atómicamente
+        // Só funciona se o userId ainda NÃO estiver no array de curtidas
+        const postAdicionado = await Feed.findOneAndUpdate(
+            { _id: postId, curtidas: { $ne: userId } },
+            { $addToSet: { curtidas: userId }, $inc: { reacoes: 1 } },
+            { new: true }
+        );
+
+        if (postAdicionado) {
+            return res.json({ totalLikes: postAdicionado.reacoes, isLiked: true });
         }
 
-        await post.save();
-        res.json({ totalLikes: post.reacoes, isLiked: index === -1 });
+        // 🛡️ TENTATIVA 2: Se falhou acima, é porque já curtiu. Então remove atómicamente!
+        const postRemovido = await Feed.findOneAndUpdate(
+            { _id: postId, curtidas: userId },
+            { $pull: { curtidas: userId }, $inc: { reacoes: -1 } },
+            { new: true }
+        );
+
+        if (postRemovido) {
+            return res.json({ totalLikes: postRemovido.reacoes, isLiked: false });
+        }
+
+        res.status(404).json({ erro: 'Publicação não encontrada.' });
+
     } catch (erro) {
         res.status(500).json({ erro: 'Erro ao processar reação.' });
     }

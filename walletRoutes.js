@@ -44,8 +44,9 @@ router.post('/deposito', auth, async (req, res) => {
         const userId = getUserId(req);
         const { canal, numeroOrigem, valor, idTransacaoBancaria, comprovanteBase64, senhaConfirmacao } = req.body;
 
-        // PROTEÇÃO CONTRA VALORES NEGATIVOS OU INVÁLIDOS
-        const valorNumerico = Number(valor);
+        // PROTEÇÃO ESTRITA DE PONTO FLUTUANTE (Força 2 casas decimais para evitar anomalias matemáticas)
+        const valorNumerico = Number(Number(valor).toFixed(2));
+        
         if (isNaN(valorNumerico) || valorNumerico <= 0) {
             return res.status(400).json({ erro: 'Valor de depósito inválido. O montante deve ser maior que zero.' });
         }
@@ -66,7 +67,7 @@ router.post('/deposito', auth, async (req, res) => {
             idUnicoUsuario: usuario.idUnico,
             telefoneUsuario: usuario.telefone,
             tipo: 'deposito',
-            valor: valorNumerico, // Usa a variável já tratada e blindada
+            valor: valorNumerico, 
             status: 'pendente',
             operadora: operadoraFormatada,
             
@@ -105,7 +106,9 @@ router.post('/saque', auth, async (req, res) => {
         const userId = getUserId(req);
         const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao, operadora } = req.body;
 
-        const valorSaqueBruto = Number(valor);
+        // PROTEÇÃO ESTRITA DE PONTO FLUTUANTE E VALORES
+        const valorSaqueBruto = Number(Number(valor).toFixed(2));
+        
         if (isNaN(valorSaqueBruto) || valorSaqueBruto <= 0) {
             return res.status(400).json({ erro: 'Valor de saque inválido.' });
         }
@@ -128,7 +131,6 @@ router.post('/saque', auth, async (req, res) => {
         // ====================================================================
         if (config.saqueAbre && config.saqueFecha) {
             const agora = new Date();
-            // Calcula a hora decimal (ex: 14:30 = 14.5)
             const horaAtual = agora.getHours() + (agora.getMinutes() / 60);
             
             const [hAbre, mAbre] = config.saqueAbre.split(':').map(Number);
@@ -136,7 +138,7 @@ router.post('/saque', auth, async (req, res) => {
             
             const tempoAbre = hAbre + ((mAbre || 0) / 60);
             const tempoFecha = hFecha + ((mFecha || 0) / 60);
-            const diaSemana = agora.getDay(); // 0 = Domingo, 6 = Sábado
+            const diaSemana = agora.getDay(); 
 
             if (diaSemana === 0 || diaSemana === 6 || horaAtual < tempoAbre || horaAtual > tempoFecha) {
                 return res.status(403).json({ erro: 'Operação rejeitada: Levantamentos disponíveis apenas em dias úteis, dentro do horário de funcionamento.' });
@@ -150,24 +152,22 @@ router.post('/saque', auth, async (req, res) => {
         }
 
         // ====================================================================
-        // 🚀 CORREÇÃO CRÍTICA: OPERAÇÃO ATÓMICA (PREVINE DUPLO SAQUE / RACE CONDITION)
+        // 🚀 OPERAÇÃO ATÓMICA (PREVINE DUPLO SAQUE / RACE CONDITION)
         // ====================================================================
-        // O banco de dados só atualiza se o saldo for maior ou igual ao saque,
-        // garantindo que múltiplos cliques não furem a segurança do sistema.
         const usuarioAtualizado = await User.findOneAndUpdate(
             { _id: usuario._id, saldo: { $gte: valorSaqueBruto } },
             { $inc: { saldo: -valorSaqueBruto } },
-            { new: true } // Retorna o usuário já com o saldo descontado
+            { new: true } 
         );
 
         if (!usuarioAtualizado) {
             return res.status(400).json({ erro: 'Saldo insuficiente ou transação simultânea bloqueada pelo sistema de segurança.' });
         }
 
-        // PUXA A TAXA REAL DO SISTEMA (CONGELAMENTO)
+        // PUXA A TAXA REAL DO SISTEMA (CONGELAMENTO E PRECISÃO)
         const taxaAtual = config.saqueTaxa ?? 10;
-        const valorTaxa = (valorSaqueBruto * taxaAtual) / 100;
-        const valorLiquido = valorSaqueBruto - valorTaxa;
+        const valorTaxa = Number(((valorSaqueBruto * taxaAtual) / 100).toFixed(2));
+        const valorLiquido = Number((valorSaqueBruto - valorTaxa).toFixed(2));
 
         const novaTransacao = new Transaction({
             usuarioId: usuarioAtualizado._id,
@@ -201,7 +201,7 @@ router.post('/saque', auth, async (req, res) => {
 
         res.json({ 
             mensagem: 'Pedido de levantamento enviado com sucesso!',
-            novoSaldo: usuarioAtualizado.saldo // Envia o novo saldo validado para o frontend (Falso Desconto Corrigido)
+            novoSaldo: usuarioAtualizado.saldo 
         });
 
     } catch (erro) {
@@ -216,7 +216,6 @@ router.post('/saque', auth, async (req, res) => {
 router.get('/historico', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
-        // Filtra apenas as transações do usuário logado
         const historico = await Transaction.find({ usuarioId: userId }).sort({ createdAt: -1 });
         res.json(historico);
     } catch (erro) {

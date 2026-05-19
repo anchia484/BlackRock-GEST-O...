@@ -8,13 +8,14 @@ const auth = require('./authMiddleware');
 const router = express.Router();
 
 // ==============================================================
-// MOTOR DE COMISSÕES DIÁRIAS (TAREFAS N1 / N2) - CORRIGIDO
+// 🚀 MOTOR DE COMISSÕES DIÁRIAS (TAREFAS N1 / N2) - BLINDADO
+// Este motor agora recebe o GANHO TOTAL DO DIA e só roda 1 VEZ!
 // ==============================================================
-async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoNaTarefa) {
+async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoTotalDiario) {
     try {
         const config = await System.findOne() || {};
-        const taxaN1 = config.percN1 || 5;                 // Ex: 5%
-        const taxaN2 = config.percN2 || 2;                 // Ex: 2%
+        const taxaN1 = config.percN1 || 5;                 
+        const taxaN2 = config.percN2 || 2;                 
 
         // 1. NÍVEL 1 (Quem convidou diretamente?)
         if (!usuarioQueFezTarefa.convidadoPor) return;
@@ -25,21 +26,29 @@ async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoNaTarefa) {
         const agora = new Date();
         const expN1 = patN1.dataExpiracaoPlano ? new Date(patN1.dataExpiracaoPlano) : new Date(0);
 
-        // A REGRA DA RESPIRAÇÃO: O líder tem plano ativo E não expirou?
+        // REGRA DE ELEGIBILIDADE: Plano ativo e não expirado?
         const n1Elegivel = (patN1.planoAtivo !== 'Nenhum') && (expN1 > agora);
 
         if (n1Elegivel) {
             
-            // BÓNUS DE TAREFA N1 (Sempre que faz tarefa diária)
-            const bonusN1 = (ganhoNaTarefa * taxaN1) / 100;
+            // BÓNUS N1 (Calculado sobre o Total do Dia)
+            const bonusN1 = Number(((ganhoTotalDiario * taxaN1) / 100).toFixed(2));
             if (bonusN1 > 0) {
-                // Atualiza Saldo e SaldoBonus para o Dashboard não ficar congelado
                 await User.findByIdAndUpdate(patN1._id, {
                     $inc: { saldo: bonusN1, saldoBonus: bonusN1 }
                 });
+                
                 await Transaction.create({
                     usuarioId: patN1._id, nomeUsuario: patN1.nome,
                     tipo: 'bonus_rede', valor: bonusN1, status: 'concluido'
+                });
+
+                // Notificação Elegante de Rede
+                await Notification.create({
+                    usuarioId: patN1._id,
+                    titulo: 'Comissão de Equipa (N1) 💰',
+                    mensagem: `Você recebeu ${bonusN1} MZN de comissão das tarefas concluídas pelo ID ${usuarioQueFezTarefa.idUnico}.`,
+                    tipo: 'financeiro', lida: false
                 });
             }
 
@@ -52,14 +61,23 @@ async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoNaTarefa) {
                     const n2Elegivel = (patN2.planoAtivo !== 'Nenhum') && (expN2 > agora);
 
                     if (n2Elegivel) {
-                        const bonusN2 = (ganhoNaTarefa * taxaN2) / 100;
+                        const bonusN2 = Number(((ganhoTotalDiario * taxaN2) / 100).toFixed(2));
                         if (bonusN2 > 0) {
                             await User.findByIdAndUpdate(patN2._id, {
                                 $inc: { saldo: bonusN2, saldoBonus: bonusN2 }
                             });
+                            
                             await Transaction.create({
                                 usuarioId: patN2._id, nomeUsuario: patN2.nome,
                                 tipo: 'bonus_rede', valor: bonusN2, status: 'concluido'
+                            });
+
+                            // Notificação Elegante de Rede (Indireto)
+                            await Notification.create({
+                                usuarioId: patN2._id,
+                                titulo: 'Comissão Indireta (N2) 💎',
+                                mensagem: `Você recebeu ${bonusN2} MZN de comissão indireta pelas tarefas do ID ${usuarioQueFezTarefa.idUnico}.`,
+                                tipo: 'financeiro', lida: false
                             });
                         }
                     }
@@ -81,7 +99,6 @@ router.get('/status', auth, async (req, res) => {
             return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0 });
         }
 
-        // 🚀 MÁGICA DO RESET PREGUIÇOSO DAS 00h00 MANTIDA
         const dataAtual = new Date();
         const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
 
@@ -102,7 +119,6 @@ router.get('/status', auth, async (req, res) => {
             diasRestantes = diferencaDias >= 0 ? diferencaDias : 0;
         }
 
-        // SEU BANCO DE FRASES ORIGINAL E GIGANTE TOTALMENTE RESTAURADO
         const bancoFrases = [
             "Auditoria de Fundo ETF", "Balanceamento de Liquidez", "Análise de Risco Quantitativo",
             "Mapeamento de Arbitragem", "Sincronização de Bloco HFT", "Validação Institucional",
@@ -192,7 +208,6 @@ router.post('/executar', auth, async (req, res) => {
         const plano = await Plan.findOne({ nome: usuario.planoAtivo });
         if (!plano) return res.status(400).json({ erro: 'Nenhum plano ativo encontrado.' });
 
-        // 🚀 LÓGICA DE RESET PREGUIÇOSO DAS 00H00 MANTIDA
         const dataAtual = new Date();
         const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
         const isMesmoDia = dataAtual.getDate() === dataUltima.getDate() &&
@@ -204,10 +219,11 @@ router.post('/executar', auth, async (req, res) => {
         }
 
         const limite = plano.tarefas || plano.limiteTarefasDia || 5;
-        const ganhoPorTarefa = plano.ganhoDiario / limite;
+        const ganhoTotalDiario = Number(plano.ganhoDiario); // Valor total garantido do dia
+        const ganhoPorTarefa = Number((ganhoTotalDiario / limite).toFixed(2));
 
         // ====================================================================
-        // TRANSAÇÃO ATÓMICA DE TAREFAS MANTIDA RIGOROSAMENTE
+        // TRANSAÇÃO ATÓMICA DE TAREFAS 
         // ====================================================================
         const usuarioAtualizado = await User.findOneAndUpdate(
             { _id: req.usuario.id, tarefasFeitasHoje: { $lt: limite } },
@@ -233,8 +249,11 @@ router.post('/executar', auth, async (req, res) => {
             }).save();
         } catch (err) {}
 
-        // 🚀 CHAMA O NOVO MOTOR DE BÓNUS CORRIGIDO
-        await distribuirComissoesDeRede(usuarioAtualizado, ganhoPorTarefa);
+        // 🚀 O GATILHO OFICIAL: Só paga a equipa se esta for a ÚLTIMA tarefa do dia!
+        if (usuarioAtualizado.tarefasFeitasHoje === limite) {
+            // Entrega o Valor TOTAL do dia para a função calcular a percentagem em cima
+            await distribuirComissoesDeRede(usuarioAtualizado, ganhoTotalDiario);
+        }
 
         res.json({ sucesso: true, ganho: ganhoPorTarefa });
 

@@ -1,176 +1,149 @@
 const express = require('express');
 const router = express.Router();
-const User = require('./User');
 const MarketProduct = require('./MarketProduct');
 const MarketContract = require('./MarketContract');
 const MarketConfig = require('./MarketConfig');
-const Transaction = require('./Transaction');
+const User = require('./User'); // Import necessário para deduzir saldo
+const Transaction = require('./Transaction'); // Import necessário para o extrato
 const auth = require('./authMiddleware');
 
-// ==========================================
-// 1. CARREGAR A VITRINE DO MERCADO (PARA O CLIENTE)
-// ==========================================
-router.get('/vitrine', auth, async (req, res) => {
+const adminAuth = async (req, res, next) => {
+    if (!req.usuario || !req.usuario.isAdmin) {
+        return res.status(403).json({ erro: 'Acesso restrito à Diretoria BlackRock.' });
+    }
+    next();
+};
+
+router.get('/config', auth, adminAuth, async (req, res) => {
     try {
         let config = await MarketConfig.findOne();
-        const agora = new Date();
-        
-        // 🚀 GUILHOTINA DO TEMPO: FECHAMENTO REAL AUTOMÁTICO
-        if (config && config.isMercadoAberto && config.dataFechamento) {
-            if (agora >= new Date(config.dataFechamento)) {
-                // O tempo esgotou! Fecha o mercado e oculta os produtos instantaneamente
-                config.isMercadoAberto = false;
-                await config.save();
-                await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
-            }
+        if (!config) {
+            config = await MarketConfig.create({ isMercadoAberto: false });
         }
-
-        if (!config || !config.isMercadoAberto) {
-            return res.json({ isMercadoAberto: false, produtos: [], dataFechamento: null });
-        }
-
-        // Busca apenas produtos ativos
-        const produtos = await MarketProduct.find({ status: 'ativo' }).sort({ retornoPercentual: -1 });
-        
-        res.json({ 
-            isMercadoAberto: true, 
-            dataFechamento: config.dataFechamento, 
-            produtos 
-        });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar o mercado.' }); }
+        res.json(config);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar configurações do mercado.' }); }
 });
 
-// ==========================================
-// 2. O MOTOR DE COMPRA (TRANSAÇÃO ATÓMICA E CONTRATO ÚNICO)
-// ==========================================
+router.post('/config', auth, adminAuth, async (req, res) => {
+    try {
+        const { isMercadoAberto, dataFechamento } = req.body;
+        let config = await MarketConfig.findOne();
+        if (!config) config = new MarketConfig();
+        
+        if (isMercadoAberto === false && config.isMercadoAberto === true) {
+            await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
+        }
+        
+        config.isMercadoAberto = isMercadoAberto;
+        if (dataFechamento !== undefined) config.dataFechamento = dataFechamento; 
+        
+        await config.save();
+        res.json({ mensagem: isMercadoAberto ? '🔥 MERCADO PREMIUM ABERTO!' : '🔒 MERCADO FECHADO.', config });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao alterar estado do mercado.' }); }
+});
+
+router.get('/produtos', auth, adminAuth, async (req, res) => {
+    try {
+        const produtos = await MarketProduct.find().sort({ createdAt: -1 });
+        res.json(produtos);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar produtos.' }); }
+});
+
+router.post('/produtos', auth, adminAuth, async (req, res) => {
+    try {
+        const { nome, valorMinimo, valorMaximo, duracaoDias, retornoPercentual, limiteParticipantes, status } = req.body;
+        const novoProduto = new MarketProduct({
+            nome, valorMinimo, valorMaximo, duracaoDias, retornoPercentual, limiteParticipantes, status
+        });
+        await novoProduto.save();
+        res.status(201).json({ mensagem: 'Produto Estratégico criado com sucesso!', produto: novoProduto });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao criar produto.' }); }
+});
+
+router.put('/produtos/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const produto = await MarketProduct.findByIdAndUpdate(req.params.id, req.body, { new: true });
+        if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
+        res.json({ mensagem: 'Produto atualizado com sucesso.', produto });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao atualizar produto.' }); }
+});
+
+router.delete('/produtos/:id', auth, adminAuth, async (req, res) => {
+    try {
+        const contratosAtivos = await MarketContract.countDocuments({ produtoId: req.params.id });
+        if (contratosAtivos > 0) {
+            return res.status(400).json({ erro: 'Não pode apagar este produto porque já existem investidores com ele ativo. Mude o status para "Oculto" ou "Encerrado".' });
+        }
+        await MarketProduct.findByIdAndDelete(req.params.id);
+        res.json({ mensagem: 'Produto removido do sistema.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro ao remover produto.' }); }
+});
+
+router.get('/contratos', auth, adminAuth, async (req, res) => {
+    try {
+        const contratos = await MarketContract.find().sort({ dataFim: -1 });
+        res.json(contratos);
+    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar contratos.' }); }
+});
+
+// ====================================================================
+// 🚀 ROTA DE ASSINATURA DE CONTRATO (REPOSIÇÃO & BLINDAGEM ATÓMICA)
+// ====================================================================
 router.post('/investir', auth, async (req, res) => {
     try {
         const { produtoId, valorAplicado } = req.body;
-        const valor = Number(valorAplicado);
-        const usuarioId = req.usuario.id;
+        const valorNumerico = Number(Number(valorAplicado).toFixed(2));
 
-        if (!valor || valor <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+        if (isNaN(valorNumerico) || valorNumerico <= 0) return res.status(400).json({ erro: 'Valor de investimento inválido.' });
 
-        let config = await MarketConfig.findOne();
-        
-        // 🚀 VERIFICAÇÃO DE FECHO NO MOMENTO DO CLIQUE
-        if (config && config.isMercadoAberto && config.dataFechamento && new Date() >= new Date(config.dataFechamento)) {
-            config.isMercadoAberto = false;
-            await config.save();
-            await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
-            return res.status(403).json({ erro: 'O tempo esgotou! O mercado acabou de fechar.' });
+        const config = await MarketConfig.findOne();
+        if (!config || !config.isMercadoAberto) return res.status(403).json({ erro: 'O Mercado Premium encontra-se encerrado. Aguarde a próxima sessão.' });
+
+        const produto = await MarketProduct.findOne({ _id: produtoId, status: 'ativo' });
+        if (!produto) return res.status(404).json({ erro: 'Contrato não disponível no mercado atual.' });
+
+        if (valorNumerico < produto.valorMinimo) return res.status(400).json({ erro: `Investimento mínimo exigido: ${produto.valorMinimo} MZN.` });
+        if (produto.valorMaximo && valorNumerico > produto.valorMaximo) return res.status(400).json({ erro: `Teto máximo ultrapassado: ${produto.valorMaximo} MZN.` });
+
+        // 🛡️ COMPRA ATÓMICA: Garante que não compra o contrato duas vezes com a mesma fração de saldo
+        const usuario = await User.findOneAndUpdate(
+            { _id: req.usuario.id, saldo: { $gte: valorNumerico } },
+            { $inc: { saldo: -valorNumerico } },
+            { new: true }
+        );
+
+        if (!usuario) {
+            return res.status(400).json({ erro: 'Saldo insuficiente para a operação ou transação simultânea bloqueada.' });
         }
 
-        if (!config || !config.isMercadoAberto) {
-            return res.status(403).json({ erro: 'O Mercado Estratégico está fechado no momento.' });
-        }
+        const lucro = Number((valorNumerico * (produto.retornoPercentual / 100)).toFixed(2));
+        const valorRetorno = Number((valorNumerico + lucro).toFixed(2));
 
-        // 🚀 REGRA DE OURO: CONTRATO ÚNICO
-        const contratoExistente = await MarketContract.findOne({ usuarioId: usuarioId, status: 'ativo' });
-        if (contratoExistente) {
-            return res.status(400).json({ erro: 'Você já possui um contrato estratégico ativo. É permitido apenas um por ciclo!' });
-        }
-
-        const produto = await MarketProduct.findById(produtoId);
-        if (!produto || produto.status !== 'ativo') {
-            return res.status(404).json({ erro: 'Produto indisponível.' });
-        }
-
-        if (valor < produto.valorMinimo) {
-            return res.status(400).json({ erro: `A aplicação mínima para este contrato é de ${produto.valorMinimo} MZN.` });
-        }
-        if (produto.valorMaximo && valor > produto.valorMaximo) {
-            return res.status(400).json({ erro: `A aplicação máxima permitida é de ${produto.valorMaximo} MZN.` });
-        }
-        if (produto.limiteParticipantes > 0 && produto.participantesAtuais >= produto.limiteParticipantes) {
-            return res.status(400).json({ erro: 'As vagas para este contrato já esgotaram!' });
-        }
-
-        const usuario = await User.findById(usuarioId);
-        if (usuario.saldo < valor) {
-            return res.status(400).json({ erro: 'Saldo insuficiente para realizar esta operação.' });
-        }
-
-        const lucroCalculado = valor * (produto.retornoPercentual / 100);
-        const valorRetornoTotal = valor + lucroCalculado;
-        
         const dataInicio = new Date();
-        const dataFim = new Date(dataInicio.getTime() + (produto.duracaoDias * 24 * 60 * 60 * 1000));
+        const dataFim = new Date();
+        dataFim.setDate(dataFim.getDate() + produto.duracaoDias);
 
-        // EXECUÇÃO FINANCEIRA
-        usuario.saldo -= valor; 
-        await usuario.save();
-
-        produto.participantesAtuais += 1;
-        await produto.save();
-
-        const novoContrato = new MarketContract({
+        const contrato = new MarketContract({
             usuarioId: usuario._id,
             nomeUsuario: usuario.nome,
             idUnicoUsuario: usuario.idUnico,
             produtoId: produto._id,
             nomeProduto: produto.nome,
-            valorAplicado: valor,
-            valorRetorno: valorRetornoTotal,
+            valorAplicado: valorNumerico,
+            valorRetorno: valorRetorno,
             dataInicio: dataInicio,
             dataFim: dataFim,
             status: 'ativo'
         });
-        await novoContrato.save();
 
-        await new Transaction({
-            usuarioId: usuario._id,
-            nomeUsuario: usuario.nome,
-            idUnicoUsuario: usuario.idUnico,
-            telefoneUsuario: usuario.telefone,
-            tipo: 'investimento_mercado',
-            valor: valor,
-            status: 'aprovado',
-            operadora: 'BlackRock Premium',
-            idTransacaoBancaria: 'MKT-' + Date.now()
-        }).save();
+        await contrato.save();
 
-        res.json({ mensagem: 'Contrato Assinado com Sucesso! O seu capital está agora protegido e a gerar lucros.', contrato: novoContrato });
+        res.json({ mensagem: `Sucesso! Contrato estratégico ${produto.nome} ativo. Capital de ${valorNumerico} MZN alocado.` });
 
-    } catch (e) { res.status(500).json({ erro: 'Falha crítica ao processar o investimento.' }); }
-});
-
-// ==========================================
-// 3. CARREGAR OS CONTRATOS ATIVOS DO UTILIZADOR
-// ==========================================
-router.get('/meus-contratos', auth, async (req, res) => {
-    try {
-        const contratos = await MarketContract.find({ usuarioId: req.usuario.id }).sort({ createdAt: -1 });
-        res.json(contratos);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar os seus contratos.' }); }
-});
-
-// ==========================================
-// 4. MOTOR DO FEED VIVO (INTELIGÊNCIA DE DADOS)
-// ==========================================
-router.get('/feed-vivo', auth, async (req, res) => {
-    try {
-        const config = await MarketConfig.findOne();
-        if (!config || !config.isMercadoAberto) {
-            return res.json({ mercadoAberto: false, feedReal: [], nomesProdutos: [] });
-        }
-
-        // Puxa os nomes reais dos produtos que a Diretoria criou para alimentar o simulador
-        const produtosAtivos = await MarketProduct.find({ status: 'ativo' }).select('nome');
-        const nomesProdutos = produtosAtivos.map(p => p.nome);
-
-        // Puxa as últimas 5 compras REAIS para dar vida ao feed
-        const ultimosContratos = await MarketContract.find({ status: 'ativo' })
-            .sort({ createdAt: -1 })
-            .limit(5)
-            .select('idUnicoUsuario nomeProduto valorAplicado createdAt');
-
-        res.json({ 
-            mercadoAberto: true, 
-            feedReal: ultimosContratos, 
-            nomesProdutos: nomesProdutos 
-        });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao processar dados do Feed.' }); }
+    } catch (e) {
+        console.error('Erro na assinatura do mercado:', e);
+        res.status(500).json({ erro: 'Erro interno ao processar e assinar contrato.' });
+    }
 });
 
 module.exports = router;

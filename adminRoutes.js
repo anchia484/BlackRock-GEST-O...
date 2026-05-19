@@ -25,7 +25,6 @@ router.post('/login', async (req, res) => {
         const senhaValida = await bcrypt.compare(senha, admin.senha);
         if (!senhaValida) return res.status(401).json({ erro: 'Senha incorreta.' });
 
-        // 🚀 REGRA APLICADA: Sessão de Admin morre em exatos 30 minutos
         const token = jwt.sign({ id: admin._id, isAdmin: true }, process.env.JWT_SECRET, { expiresIn: '30m' });
         res.json({ token, admin: { nome: admin.nome, id: admin.idUnico } });
     } catch (e) { res.status(500).json({ erro: 'Erro no login.' }); }
@@ -41,7 +40,6 @@ const adminAuth = async (req, res, next) => {
 // ==========================================
 router.get('/dashboard', auth, adminAuth, async (req, res) => {
     try {
-        // 🚀 PREVENÇÃO DE COLAPSO: Usando MongoDB Aggregation para não encher a memória RAM
         const aggTotais = await Transaction.aggregate([
             { $match: { status: { $in: ['aprovado', 'concluido'] } } },
             { $group: { _id: "$tipo", total: { $sum: "$valor" } } }
@@ -53,7 +51,6 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
             if (g._id === 'saque') totalSacado = g.total;
         });
 
-        // 🚀 Totais de Hoje
         const startOfDay = new Date(); startOfDay.setHours(0,0,0,0);
         const aggHoje = await Transaction.aggregate([
             { $match: { tipo: 'deposito', status: { $in: ['aprovado', 'concluido'] }, createdAt: { $gte: startOfDay } } },
@@ -61,13 +58,11 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
         ]);
         const depositosHoje = aggHoje.length > 0 ? aggHoje[0].total : 0;
 
-        // 🚀 Contagens
         const usuariosAtivos = await User.countDocuments({ planoAtivo: { $ne: 'Nenhum' } });
         const novosUsuariosHoje = await User.countDocuments({ createdAt: { $gte: startOfDay } });
         const depPendentes = await Transaction.countDocuments({ tipo: 'deposito', status: 'pendente' });
         const saqPendentes = await Transaction.countDocuments({ tipo: 'saque', status: 'pendente' });
 
-        // 🚀 Carrega apenas as transações dos últimos 7 dias para o Gráfico e Logs (Poupa o Servidor)
         const seteDiasAtras = new Date(); seteDiasAtras.setDate(seteDiasAtras.getDate() - 7);
         const transacoesRecentes = await Transaction.find({ 
             status: { $in: ['aprovado', 'concluido'] }, 
@@ -124,9 +119,9 @@ router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro nos alertas.' }); }
 });
 
-// ==========================================
-// 3. MÓDULO FINANCEIRO CORPORATIVO (CAIXA FORTE)
-// ==========================================
+// ==============================================================
+// 3. MÓDULO FINANCEIRO CORPORATIVO (CAIXA FORTE BLINDADO ATÓMICO)
+// ==============================================================
 router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
     try {
         const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } })
@@ -139,48 +134,73 @@ router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
 router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
     try {
         const { transacaoId, acao, motivoRejeicao } = req.body;
-        const transacao = await Transaction.findById(transacaoId);
-        if (!transacao) return res.status(404).json({ erro: 'Transação não encontrada.' });
-        if (transacao.status !== 'pendente') return res.status(400).json({ erro: 'Esta transação já foi processada.' });
+        const motivoTexto = acao === 'rejeitado' ? (motivoRejeicao || 'Não cumpre os requisitos do sistema.') : null;
 
-        const usuario = await User.findById(transacao.usuarioId);
-        if (!usuario) return res.status(404).json({ erro: 'Usuário dono da transação não encontrado.' });
+        // 🛡️ TRINCHEIRA 1: Operação Atómica para garantir que apenas 1 clique altera o status
+        const transacao = await Transaction.findOneAndUpdate(
+            { _id: transacaoId, status: 'pendente' },
+            { $set: { status: acao, motivoRejeicao: motivoTexto } },
+            { new: true } // Retorna a transação já fechada
+        );
 
-        transacao.status = acao;
+        if (!transacao) {
+            return res.status(400).json({ erro: 'Transação já foi processada ou bloqueada pelo sistema anti-fraude.' });
+        }
+
         let tituloNotif = ''; let mensagemNotif = '';
+        let usuarioAtualizado = null;
 
+        // 🛡️ TRINCHEIRA 2: Operação Atómica ($inc) para evitar injecão duplicada
         if (acao === 'aprovado') {
             if (transacao.tipo === 'deposito') {
-                usuario.saldo += transacao.valor;
+                usuarioAtualizado = await User.findByIdAndUpdate(
+                    transacao.usuarioId,
+                    { $inc: { saldo: transacao.valor } },
+                    { new: true }
+                );
                 tituloNotif = 'Depósito Aprovado ✅';
                 mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
             } else if (transacao.tipo === 'saque') {
+                // No saque aprovado o dinheiro já saiu no momento do pedido, não altera saldo.
+                usuarioAtualizado = await User.findById(transacao.usuarioId);
                 tituloNotif = 'Levantamento Aprovado 💸';
                 mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
             }
         } 
         else if (acao === 'rejeitado') {
-            transacao.motivoRejeicao = motivoRejeicao || 'Não cumpre os requisitos do sistema.';
             if (transacao.tipo === 'saque') {
-                usuario.saldo += transacao.valor; 
+                // ESTORNO ATÓMICO: Devolve o dinheiro à conta sem duplicar
+                usuarioAtualizado = await User.findByIdAndUpdate(
+                    transacao.usuarioId,
+                    { $inc: { saldo: transacao.valor } },
+                    { new: true }
+                );
                 tituloNotif = 'Levantamento Rejeitado ❌';
                 mensagemNotif = `O seu levantamento foi rejeitado e o valor foi devolvido ao saldo. Motivo: ${transacao.motivoRejeicao}`;
             } else if (transacao.tipo === 'deposito') {
+                usuarioAtualizado = await User.findById(transacao.usuarioId);
                 tituloNotif = 'Depósito Rejeitado ❌';
                 mensagemNotif = `O seu depósito foi rejeitado. Motivo: ${transacao.motivoRejeicao}`;
             }
         }
 
-        await transacao.save();
-        await usuario.save();
-
-        if (tituloNotif !== '') {
-            await new Notification({ usuarioId: usuario._id, titulo: tituloNotif, mensagem: mensagemNotif, tipo: 'financeiro', lida: false }).save();
+        if (usuarioAtualizado && tituloNotif !== '') {
+            await new Notification({ 
+                usuarioId: usuarioAtualizado._id, 
+                titulo: tituloNotif, 
+                mensagem: mensagemNotif, 
+                tipo: 'financeiro', 
+                lida: false 
+            }).save();
         }
 
         res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
-    } catch (e) { res.status(500).json({ erro: 'Falha no servidor ao processar.' }); }
+    } catch (e) { 
+        console.error("Erro Processar Transação:", e);
+        res.status(500).json({ erro: 'Falha no servidor ao processar transação.' }); 
+    }
 });
+
 // ==========================================
 // 4. GESTÃO DE USUÁRIOS E CORREÇÃO DO BURACO NEGRO
 // ==========================================
@@ -195,18 +215,18 @@ router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
 router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
     try {
         const { userId, acao, valor, novaSenha } = req.body;
-        const u = await User.findById(userId);
+        
+        let u = await User.findById(userId);
         if (!u) return res.status(404).json({ erro: 'Não encontrado.' });
         if (u.isAdmin) return res.status(403).json({ erro: 'Não pode alterar outro Diretor.' });
 
-        if (acao === 'bloquear') u.status = 'bloqueado';
-        if (acao === 'desbloquear') u.status = 'ativo';
-        if (acao === 'analise') u.status = 'analise';
+        if (acao === 'bloquear') { u.status = 'bloqueado'; await u.save(); }
+        if (acao === 'desbloquear') { u.status = 'ativo'; await u.save(); }
+        if (acao === 'analise') { u.status = 'analise'; await u.save(); }
         
-        // 🚀 CORREÇÃO DO GHOST EDIT (GERA RECIBO NO HISTÓRICO QUANDO O ADMIN ALTERA O SALDO)
         if (acao === 'saldo_add') {
-            const valorAdd = Number(valor);
-            u.saldo += valorAdd;
+            const valorAdd = Number(Number(valor).toFixed(2));
+            u = await User.findByIdAndUpdate(u._id, { $inc: { saldo: valorAdd } }, { new: true });
             await new Transaction({
                 usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
                 tipo: 'deposito', valor: valorAdd, status: 'aprovado',
@@ -214,9 +234,16 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             }).save();
         }
         if (acao === 'saldo_rem') {
-            const valorRem = Number(valor);
+            const valorRem = Number(Number(valor).toFixed(2));
             if(u.saldo < valorRem) return res.status(400).json({ erro: 'Saldo insuficiente no usuário.' });
-            u.saldo -= valorRem;
+            
+            u = await User.findOneAndUpdate(
+                { _id: u._id, saldo: { $gte: valorRem } },
+                { $inc: { saldo: -valorRem } },
+                { new: true }
+            );
+            if(!u) return res.status(400).json({ erro: 'Falha na dedução atómica.' });
+
             await new Transaction({
                 usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
                 tipo: 'saque', valor: valorRem, status: 'aprovado',
@@ -227,8 +254,9 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             const salt = await bcrypt.genSalt(10);
             u.senha = await bcrypt.hash(novaSenha, salt);
             u.precisaTrocarSenha = true;
+            await u.save();
         }
-        await u.save();
+        
         res.json({ mensagem: 'Ação executada com sucesso e registada na auditoria.' });
     } catch (e) { res.status(500).json({ erro: 'Erro na ação administrativa.' }); }
 });
@@ -263,7 +291,6 @@ router.get('/rede/stats', auth, adminAuth, async (req, res) => {
         const totalUsers = await User.countDocuments();
         const totalAgentes = await User.countDocuments({ isAgente: true });
         
-        // 🚀 OTIMIZAÇÃO: Busca apenas comissões recentes para não estourar a memória
         const diasAtras = new Date(); diasAtras.setDate(diasAtras.getDate() - 30);
         const comissoes = await Transaction.find({ 
             tipo: { $in: ['comissao', 'bonus_deposito', 'bonus_rede'] }, 
@@ -308,7 +335,7 @@ router.post('/rede/config', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 11. INTELIGÊNCIA AVANÇADA DE REDE (FRAUDE E AUDITORIA)
+// 11. INTELIGÊNCIA AVANÇADA DE REDE E FRAUDE
 // ==========================================
 router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
     try {
@@ -335,7 +362,9 @@ router.post('/rede/bloquear-ganhos', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao alterar permissão.' }); }
 });
 
-// Criar ou Editar Plano (Com Cálculo Inteligente %)
+// ==========================================
+// 12. GESTÃO DE PLANOS (COM CÁLCULO MZN)
+// ==========================================
 router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
     try {
         const { id, nome, nivel, valor, percentagem, duracao, tarefas } = req.body;
@@ -349,19 +378,11 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         const ganhoTotalCalculado = ganhoDiarioCalculado * dias;
 
         const dadosPlano = {
-            nome: nome,
-            ganhoDiario: ganhoDiarioCalculado,
-            nivel: nivel,
-            valor: valInvestimento,
-            percentagem: valPercentagem,
-            duracao: dias,
+            nome: nome, ganhoDiario: ganhoDiarioCalculado, nivel: nivel, valor: valInvestimento,
+            percentagem: valPercentagem, duracao: dias,
             tarefas: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5)),
-            ganhoTotal: ganhoTotalCalculado,
-            ativo: true,
-            estrato: nivel,
-            valorEntrada: valInvestimento,
-            duracaoDias: dias,
-            retornoTotal: ganhoTotalCalculado,
+            ganhoTotal: ganhoTotalCalculado, ativo: true, estrato: nivel, valorEntrada: valInvestimento,
+            duracaoDias: dias, retornoTotal: ganhoTotalCalculado,
             limiteTarefasDia: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5))
         };
 
@@ -373,7 +394,7 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
             if (existe) return res.status(400).json({ erro: 'Este nome de Node já existe.' });
             const novo = new Plan(dadosPlano);
             await novo.save();
-            res.json({ mensagem: 'Novo Node criado e matemática sincronizada.' });
+    res.json({ mensagem: 'Novo Node criado e matemática sincronizada.' });
         }
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano: ' + e.message }); }
 });
@@ -389,9 +410,7 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
         const usuariosAtivos = await User.countDocuments({ 'planoAtivo.status': true });
 
         res.json({
-            execucoesHoje,
-            totalPago: totalPago[0]?.total || 0,
-            usuariosAtivos,
+            execucoesHoje, totalPago: totalPago[0]?.total || 0, usuariosAtivos,
             mediaGanhos: execucoesHoje > 0 ? (totalPago[0]?.total / usuariosAtivos).toFixed(2) : 0
         });
     } catch (e) { res.status(500).json({ erro: e.message }); }
@@ -416,14 +435,9 @@ router.post('/feed/criar', auth, adminAuth, async (req, res) => {
         if (tipo === 'Promoção') tipoFormatado = 'promocao';
 
         const novoPost = new Feed({
-            titulo: titulo || 'Aviso da Diretoria',
-            tipo: tipoFormatado, 
-            mensagem: texto,            
-            midiaBase64: midiaBase64,   
-            formatoMidia: formatoMidia || 'nenhum',
-            isFixado: isFixado,
-            autor: 'Administração',
-            isAutomatico: false
+            titulo: titulo || 'Aviso da Diretoria', tipo: tipoFormatado, mensagem: texto,            
+            midiaBase64: midiaBase64, formatoMidia: formatoMidia || 'nenhum', isFixado: isFixado,
+            autor: 'Administração', isAutomatico: false
         });
         await novoPost.save();
         res.json({ mensagem: 'Publicação lançada no mural com sucesso!' });
@@ -437,9 +451,7 @@ router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
             const post = await Feed.findById(postId);
             if(post) await Feed.findByIdAndUpdate(postId, { isFixado: !post.isFixado });
         }
-        if(acao === 'apagar') {
-            await Feed.findByIdAndDelete(postId);
-        }
+        if(acao === 'apagar') { await Feed.findByIdAndDelete(postId); }
         res.json({ mensagem: 'Mural atualizado com sucesso.' });
     } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
 });
@@ -456,12 +468,9 @@ router.get('/notificacoes', auth, adminAuth, async (req, res) => {
 
 router.patch('/notificacoes/ler', auth, adminAuth, async (req, res) => {
     try {
-        const { id, todas } = req.body;
-        if (todas) {
-            await Notification.updateMany({ lida: false }, { lida: true });
-        } else {
-            await Notification.findByIdAndUpdate(id, { lida: true });
-        }
+const { id, todas } = req.body;
+        if (todas) { await Notification.updateMany({ lida: false }, { lida: true }); } 
+        else { await Notification.findByIdAndUpdate(id, { lida: true }); }
         res.json({ mensagem: 'Status de leitura atualizado.' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao atualizar notificação.' }); }
 });
@@ -474,7 +483,7 @@ router.delete('/notificacoes/limpar', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 17. SISTEMA & REGRAS (CONFIGURAÇÃO GLOBAL DA PLATAFORMA)
+// 17. SISTEMA & REGRAS (CONFIGURAÇÃO GLOBAL)
 // ==========================================
 router.get('/system', auth, adminAuth, async (req, res) => {
     try {
@@ -494,24 +503,18 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         await config.save();
         
         await SystemLog.create({
-            usuarioId: req.usuario.id,
-            usuario: 'Diretoria (ADMIN)',
-            acao: 'Atualizou as Regras e Diretrizes do Sistema',
-            tipo: 'SISTEMA',
-            ip: req.ip || req.connection.remoteAddress,
-            status: 'sucesso',
-            detalhes: payload
+            usuarioId: req.usuario.id, usuario: 'Diretoria (ADMIN)', acao: 'Atualizou as Regras do Sistema',
+            tipo: 'SISTEMA', ip: req.ip || req.connection.remoteAddress, status: 'sucesso', detalhes: payload
         });
         res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
 });
 
 // ==========================================
-// 18. ÁREA DE SUPORTE (CHAT ADMIN - LIMITADO POR SEGURANÇA OOM)
+// 18. ÁREA DE SUPORTE (CHAT ADMIN)
 // ==========================================
 router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
     try {
-        // 🚀 LIMITADO para impedir que o servidor esgote a memória ao ler todos os chats
         const mensagens = await Message.find().populate('usuarioId', 'nome idUnico fotoPerfil').sort({ createdAt: -1 }).limit(3000);
         const conversas = {};
 
@@ -520,13 +523,9 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
             const uid = msg.usuarioId._id.toString();
             if (!conversas[uid]) {
                 conversas[uid] = {
-                    usuarioId: uid,
-                    nome: msg.usuarioId.nome || 'Usuário Desconhecido',
-                    idUnico: msg.usuarioId.idUnico || '00000',
-                    fotoPerfil: msg.usuarioId.fotoPerfil || null,
-                    ultimaMensagem: msg.texto || '',
-                    data: msg.createdAt,
-                    naoLidas: 0
+                    usuarioId: uid, nome: msg.usuarioId.nome || 'Usuário Desconhecido',
+                    idUnico: msg.usuarioId.idUnico || '00000', fotoPerfil: msg.usuarioId.fotoPerfil || null,
+                    ultimaMensagem: msg.texto || '', data: msg.createdAt, naoLidas: 0
                 };
             }
             if (msg.remetente === 'usuario' && !msg.lida) conversas[uid].naoLidas++;
@@ -543,7 +542,6 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
         res.json(chat);
     } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
 });
-
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const { usuarioId, texto } = req.body;
@@ -553,11 +551,8 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
         await msg.save();
 
         await new Notification({
-            usuarioId: usuarioId,
-            titulo: 'Nova Mensagem SAC',
-            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.',
-            tipo: 'chat',
-            link: 'chat.html'
+            usuarioId: usuarioId, titulo: 'Nova Mensagem SAC',
+            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.', tipo: 'chat', link: 'chat.html'
         }).save();
 
         res.json({ mensagem: 'Resposta enviada' });

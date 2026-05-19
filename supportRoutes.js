@@ -15,11 +15,17 @@ router.post('/enviar', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-// 2. LER CHAT
+// 2. LER CHAT (OTIMIZAÇÃO EXTREMA ANTI-OOM)
 router.get('/meu-chat', auth, async (req, res) => {
     try {
-        const mensagens = await Message.find({ usuarioId: req.usuario.id }).sort({ createdAt: 1 });
-        res.json(mensagens);
+        // 🛡️ OTIMIZAÇÃO: Busca APENAS as últimas 60 mensagens. 
+        // Impede que o servidor Node.js esgote a RAM (OOM) ao enviar arrays gigantes no Polling.
+        const mensagens = await Message.find({ usuarioId: req.usuario.id })
+            .sort({ createdAt: -1 })
+            .limit(60);
+            
+        // Inverte para voltar à ordem cronológica correta (antigas no topo, novas em baixo)
+        res.json(mensagens.reverse());
     } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
@@ -40,7 +46,7 @@ router.put('/editar/:id', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro interno.' }); }
 });
 
-// 4. APAGAR MENSAGEM (O SEGREDO: Em vez de eliminar, muda o estado)
+// 4. APAGAR MENSAGEM (Muda o estado sem quebrar o banco de dados)
 router.delete('/apagar/:id', auth, async (req, res) => {
     try {
         const mensagem = await Message.findOne({ _id: req.params.id, usuarioId: req.usuario.id });
@@ -50,7 +56,7 @@ router.delete('/apagar/:id', auth, async (req, res) => {
         if (diff > 20) return res.status(400).json({ erro: 'Tempo limite expirado.' });
 
         mensagem.isApagada = true;
-        mensagem.texto = "🚫 Mensagem anulada"; // Para limpar na base de dados
+        mensagem.texto = "🚫 Mensagem anulada"; 
         await mensagem.save();
         
         res.json({ mensagem: 'Apagada.' });
