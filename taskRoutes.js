@@ -9,7 +9,7 @@ const router = express.Router();
 
 // ==============================================================
 // 🚀 MOTOR DE COMISSÕES DIÁRIAS (TAREFAS N1 / N2) - BLINDADO
-// Este motor agora recebe o GANHO TOTAL DO DIA e só roda 1 VEZ!
+// Este motor recebe o GANHO TOTAL DO DIA e só roda 1 VEZ!
 // ==============================================================
 async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoTotalDiario) {
     try {
@@ -88,7 +88,7 @@ async function distribuirComissoesDeRede(usuarioQueFezTarefa, ganhoTotalDiario) 
 }
 
 // ==============================================================
-// ROTA 1: BUSCAR STATUS (COM CONTAGEM REGRESSIVA E FRASES COMPLETAS)
+// ROTA 1: BUSCAR STATUS (COM BLOQUEIO DE DOMINGO)
 // ==============================================================
 router.get('/status', auth, async (req, res) => {
     try {
@@ -96,12 +96,13 @@ router.get('/status', auth, async (req, res) => {
         const plano = await Plan.findOne({ nome: usuario.planoAtivo });
 
         if (!plano) {
-            return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0 });
+            return res.json({ tarefasTotais: 0, tarefasConcluidas: 0, ganhoDiario: 0, diasRestantes: 0, isDomingo: false });
         }
 
         const dataAtual = new Date();
-        const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
+        const isDomingo = dataAtual.getDay() === 0; // 0 = Domingo
 
+        const dataUltima = usuario.dataUltimaTarefa ? new Date(usuario.dataUltimaTarefa) : new Date(0);
         const isMesmoDia = dataAtual.getDate() === dataUltima.getDate() &&
                            dataAtual.getMonth() === dataUltima.getMonth() &&
                            dataAtual.getFullYear() === dataUltima.getFullYear();
@@ -191,7 +192,8 @@ router.get('/status', auth, async (req, res) => {
             tarefasConcluidas: usuario.tarefasFeitasHoje,
             ganhoDiario: plano.ganhoDiario,
             diasRestantes: diasRestantes,
-            frases: frasesEmbaralhadas.slice(0, 20)
+            frases: frasesEmbaralhadas.slice(0, 20),
+            isDomingo: isDomingo // 🛡️ FLAG ENVIADA PARA O FRONTEND CONGELAR A TELA
         });
 
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar status de trabalho.' }); }
@@ -202,6 +204,11 @@ router.get('/status', auth, async (req, res) => {
 // ==============================================================
 router.post('/executar', auth, async (req, res) => {
     try {
+        // 🛡️ BARREIRA DE FERIADO: Se for Domingo, aborta instantaneamente.
+        if (new Date().getDay() === 0) {
+            return res.status(403).json({ erro: 'Mercado operacional encerrado aos domingos. As operações retornam na segunda-feira.' });
+        }
+
         let usuario = await User.findById(req.usuario.id);
         if (!usuario) return res.status(404).json({ erro: 'Usuário não encontrado.' });
 

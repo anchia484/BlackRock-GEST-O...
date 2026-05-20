@@ -1,11 +1,12 @@
 const jwt = require('jsonwebtoken');
+const System = require('./System'); // Importação crucial para o Modo Manutenção
 
-const authMiddleware = (req, res, next) => {
+// 🚀 Transformado em Async para consultar a Base de Dados em tempo real
+const authMiddleware = async (req, res, next) => {
     try {
         // 1. Verifica se o token foi enviado
         const authHeader = req.header('Authorization');
         if (!authHeader) {
-            // 🚀 O 'return' é VITAL aqui para parar o código!
             return res.status(401).json({ erro: 'Acesso negado. Token não fornecido.' });
         }
 
@@ -15,18 +16,33 @@ const authMiddleware = (req, res, next) => {
         }
 
         // 2. Verifica se o token é autêntico e se não expirou
-        // NOTA: Se você usa uma palavra-passe secreta diferente, mude o texto abaixo
         const segredo = process.env.JWT_SECRET || 'sua_chave_secreta_aqui'; 
         const decodificado = jwt.verify(token, segredo);
         
         req.usuario = decodificado;
         
-        // 3. Tudo certo! Pode entrar no Dashboard
+        // ==========================================================
+        // 🛡️ O ESCUDO IMPENETRÁVEL DE MANUTENÇÃO GLOBAL
+        // ==========================================================
+        // Se a pessoa NÃO for administrador, vamos verificar a trava!
+        if (!decodificado.isAdmin) {
+            // Consulta extremamente leve (puxa apenas a flag modoManutencao)
+            const config = await System.findOne().select('modoManutencao');
+            
+            // Se o botão vermelho foi ativado no painel da Diretoria...
+            if (config && config.modoManutencao === true) {
+                // Aborta a requisição Imediatamente com código 503 (Serviço Indisponível)
+                return res.status(503).json({ 
+                    erro: 'Plataforma em Manutenção Programada', 
+                    isManutencao: true 
+                });
+            }
+        }
+        
+        // 3. Tudo certo! Passou no escudo. Pode entrar na Rota.
         next();
         
     } catch (err) {
-        // 🚀 AQUI ESTAVA O GRANDE ERRO! 
-        // Se o token expirou, este 'return' impede que o servidor crashe.
         return res.status(401).json({ erro: 'Sessão expirada ou token inválido.' });
     }
 };

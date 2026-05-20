@@ -2,16 +2,23 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const User = require('./User');
-const Recovery = require('./Recovery'); // Importando o banco de recuperação
+const Recovery = require('./Recovery'); 
 const auth = require('./authMiddleware');
 const router = express.Router();
 
-// REGISTRO
+// ==========================================
+// REGISTRO SEGURO (COM VALIDAÇÃO DE VÍNCULO)
+// ==========================================
 router.post('/register', async (req, res) => {
     try {
         const { nome, telefone, senha, codigoConvite } = req.body;
+        
+        if (!nome || !telefone || !senha) {
+            return res.status(400).json({ erro: 'Preencha todos os campos obrigatórios.' });
+        }
+
         const usuarioExiste = await User.findOne({ telefone });
-        if (usuarioExiste) return res.status(400).json({ erro: 'Telefone já registrado.' });
+        if (usuarioExiste) return res.status(400).json({ erro: 'Telefone já registrado na plataforma.' });
 
         if (senha.length < 6 || !/[a-zA-Z]/.test(senha) || !/[0-9]/.test(senha)) {
             return res.status(400).json({ erro: 'A senha deve ter letras, números e no mínimo 6 caracteres.' });
@@ -20,15 +27,12 @@ router.post('/register', async (req, res) => {
         const salt = await bcrypt.genSalt(10);
         const senhaCriptografada = await bcrypt.hash(senha, salt);
         
-        // ====================================================================
-        // MOTOR DE GERAÇÃO DE ID ÚNICO (Prevenção de Colisão no Banco de Dados)
-        // ====================================================================
+        // MOTOR DE GERAÇÃO DE ID ÚNICO
         let idGerado;
         let isUnique = false;
         let tentativas = 0;
 
         while (!isUnique) {
-            // Se o sistema encher e tiver muitas colisões, expande automaticamente para 6 dígitos
             if (tentativas > 10) {
                 idGerado = Math.floor(100000 + Math.random() * 900000); 
             } else {
@@ -42,21 +46,32 @@ router.post('/register', async (req, res) => {
             tentativas++;
         }
 
+        // 🛡️ VALIDAÇÃO DE VÍNCULO (Impede nós órfãos na rede)
+        let patrocinadorValido = null;
+        if (codigoConvite) {
+            const patrocinador = await User.findOne({ meuCodigoConvite: codigoConvite }).select('_id').lean();
+            if (patrocinador) {
+                patrocinadorValido = codigoConvite;
+            }
+        }
+
         const novoUsuario = new User({
             nome, telefone, senha: senhaCriptografada,
             idUnico: idGerado, meuCodigoConvite: "BR" + idGerado,
-            convidadoPor: codigoConvite || null
+            convidadoPor: patrocinadorValido 
         });
 
         await novoUsuario.save();
-        res.status(201).json({ mensagem: 'Conta criada!', idUnico: idGerado });
+        res.status(201).json({ mensagem: 'Conta criada com sucesso!', idUnico: idGerado });
     } catch (erro) { 
         console.error("Erro no registro:", erro);
         res.status(500).json({ erro: 'Erro no servidor' }); 
     }
 });
 
-// LOGIN
+// ==========================================
+// LOGIN (COM TOKEN DE VIDA CURTA)
+// ==========================================
 router.post('/login', async (req, res) => {
     try {
         const { nome, telefone, senha } = req.body;
@@ -68,18 +83,20 @@ router.post('/login', async (req, res) => {
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
 
-        // 🚀 REGRA APLICADA: O Token do usuário morre em exatos 20 minutos
-        const token = jwt.sign({ id: usuario._id }, process.env.JWT_SECRET, { expiresIn: '20m' });
+        // Token do usuário morre em exatos 20 minutos (Segurança Financeira)
+        const token = jwt.sign({ id: usuario._id, isAdmin: usuario.isAdmin }, process.env.JWT_SECRET, { expiresIn: '20m' });
         
         res.json({ 
             token, 
-            precisaTrocarSenha: usuario.precisaTrocarSenha, // Avisa o app se o Admin resetou a senha
-            usuario: { nome: usuario.nome, idUnico: usuario.idUnico, saldo: usuario.saldo, plano: usuario.planoAtivo } 
+            precisaTrocarSenha: usuario.precisaTrocarSenha, 
+            usuario: { nome: usuario.nome, idUnico: usuario.idUnico, saldo: usuario.saldo, plano: usuario.planoAtivo, isAdmin: usuario.isAdmin } 
         });
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
 
-// PEDIR RECUPERAÇÃO DE CONTA (Não precisa de login)
+// ==========================================
+// RECUPERAÇÃO E PERFIL
+// ==========================================
 router.post('/solicitar-recuperacao', async (req, res) => {
     try {
         const { telefone, nome, idUnico, descricao } = req.body;
@@ -88,11 +105,10 @@ router.post('/solicitar-recuperacao', async (req, res) => {
         const pedido = new Recovery({ telefone, nome, idUnico, descricao });
         await pedido.save();
 
-        res.json({ mensagem: 'Pedido enviado à Diretoria. Aguarde o contato ou tente logar mais tarde com a senha padrão informada pelo suporte.' });
+        res.json({ mensagem: 'Pedido enviado à Diretoria. Aguarde o contato ou tente logar mais tarde com a senha informada pelo suporte.' });
     } catch (erro) { res.status(500).json({ erro: 'Erro ao enviar pedido.' }); }
 });
 
-// ATUALIZAR PERFIL / TROCAR SENHA
 router.put('/perfil/atualizar', auth, async (req, res) => {
     try {
         const { nome, telefone, novaSenha, senhaAtual, carteiraPreferencial, numeroRecebimento, nomeTitularConta } = req.body;
@@ -113,7 +129,7 @@ router.put('/perfil/atualizar', auth, async (req, res) => {
             }
             const salt = await bcrypt.genSalt(10);
             usuario.senha = await bcrypt.hash(novaSenha, salt);
-            usuario.precisaTrocarSenha = false; // Retira o aviso de troca forçada
+            usuario.precisaTrocarSenha = false; 
         }
 
         await usuario.save();
