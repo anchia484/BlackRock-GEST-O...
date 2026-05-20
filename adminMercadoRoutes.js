@@ -3,6 +3,8 @@ const router = express.Router();
 const MarketProduct = require('./MarketProduct');
 const MarketContract = require('./MarketContract');
 const MarketConfig = require('./MarketConfig');
+const User = require('./User'); 
+const Transaction = require('./Transaction'); 
 const auth = require('./authMiddleware');
 
 const adminAuth = async (req, res, next) => {
@@ -15,11 +17,9 @@ const adminAuth = async (req, res, next) => {
 router.get('/config', auth, adminAuth, async (req, res) => {
     try {
         let config = await MarketConfig.findOne();
-        if (!config) {
-            config = await MarketConfig.create({ isMercadoAberto: false });
-        }
+        if (!config) config = await MarketConfig.create({ isMercadoAberto: false });
         res.json(config);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar configurações do mercado.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro de config.' }); }
 });
 
 router.post('/config', auth, adminAuth, async (req, res) => {
@@ -28,59 +28,78 @@ router.post('/config', auth, adminAuth, async (req, res) => {
         let config = await MarketConfig.findOne();
         if (!config) config = new MarketConfig();
         
-        // 🚀 LIMPEZA AUTOMÁTICA SE O ADMIN FECHAR MANUALMENTE
         if (isMercadoAberto === false && config.isMercadoAberto === true) {
             await MarketProduct.updateMany({ status: 'ativo' }, { $set: { status: 'oculto' } });
         }
         
         config.isMercadoAberto = isMercadoAberto;
-        if (dataFechamento !== undefined) config.dataFechamento = dataFechamento; // Permite null
+        if (dataFechamento !== undefined) config.dataFechamento = dataFechamento; 
         
         await config.save();
-        res.json({ mensagem: isMercadoAberto ? '🔥 MERCADO PREMIUM ABERTO!' : '🔒 MERCADO FECHADO.', config });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao alterar estado do mercado.' }); }
+        res.json({ mensagem: isMercadoAberto ? '🔥 MERCADO ABERTO!' : '🔒 MERCADO FECHADO.', config });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 router.get('/produtos', auth, adminAuth, async (req, res) => {
     try {
         const produtos = await MarketProduct.find().sort({ createdAt: -1 });
         res.json(produtos);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar produtos.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro' }); }
 });
 
+// 🚀 CRIAÇÃO COM SUPORTE A HORAS (FLEXIBILIDADE TOTAL)
 router.post('/produtos', auth, adminAuth, async (req, res) => {
     try {
-        const { nome, valorMinimo, valorMaximo, duracaoDias, retornoPercentual, limiteParticipantes, status } = req.body;
+        // Recebe duracaoHoras e duracaoDias do frontend
+        const { nome, valorMinimo, valorMaximo, duracaoDias, duracaoHoras, retornoPercentual, limiteParticipantes, status } = req.body;
+        
         const novoProduto = new MarketProduct({
-            nome, valorMinimo, valorMaximo, duracaoDias, retornoPercentual, limiteParticipantes, status
+            nome, valorMinimo, valorMaximo, 
+            duracaoDias: duracaoDias || 0, 
+            duracaoHoras: duracaoHoras || 0, // Guarda as horas no BD
+            retornoPercentual, limiteParticipantes, status
         });
         await novoProduto.save();
-        res.status(201).json({ mensagem: 'Produto Estratégico criado com sucesso!', produto: novoProduto });
+        res.status(201).json({ mensagem: 'Produto criado com sucesso!', produto: novoProduto });
     } catch (e) { res.status(500).json({ erro: 'Erro ao criar produto.' }); }
 });
 
 router.put('/produtos/:id', auth, adminAuth, async (req, res) => {
     try {
         const produto = await MarketProduct.findByIdAndUpdate(req.params.id, req.body, { new: true });
-        if (!produto) return res.status(404).json({ erro: 'Produto não encontrado.' });
-        res.json({ mensagem: 'Produto atualizado com sucesso.', produto });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao atualizar produto.' }); }
+        res.json({ mensagem: 'Atualizado com sucesso.', produto });
+    } catch (e) { res.status(500).json({ erro: 'Erro' }); }
 });
 
+// 🚀 PROTEÇÃO RESOLVIDA: O Admin FORÇA a liquidação de atrasados antes de apagar
 router.delete('/produtos/:id', auth, adminAuth, async (req, res) => {
     try {
-        const contratosAtivos = await MarketContract.countDocuments({ produtoId: req.params.id });
-        if (contratosAtivos > 0) {
-            return res.status(400).json({ erro: 'Não pode apagar este produto porque já existem investidores com ele ativo. Mude o status para "Oculto" ou "Encerrado".' });
+        const agora = new Date();
+        // 1. Tenta forçar o pagamento de todos os contratos que já passaram do tempo mas estavam presos
+        const expirados = await MarketContract.find({ produtoId: req.params.id, status: 'ativo', dataFim: { $lte: agora } });
+        
+        for(let c of expirados) {
+            const processado = await MarketContract.findOneAndUpdate({ _id: c._id, status: 'ativo' }, { $set: { status: 'finalizado' } });
+            if(processado) {
+                await User.findByIdAndUpdate(c.usuarioId, { $inc: { saldo: processado.valorRetorno, saldoPrincipal: processado.valorRetorno } });
+                await Transaction.create({ usuarioId: c.usuarioId, nomeUsuario: processado.nomeUsuario, tipo: 'retorno_mercado', valor: processado.valorRetorno, status: 'concluido' });
+            }
         }
+
+        // 2. Agora sim, verifica se sobrou alguém com o tempo ainda a rodar (realmente ativo)
+        const contratosAtivos = await MarketContract.countDocuments({ produtoId: req.params.id, status: 'ativo' });
+        if (contratosAtivos > 0) {
+            return res.status(400).json({ erro: 'Não pode apagar. Ainda existem clientes com o relógio a correr. Aguarde terminar.' });
+        }
+        
+        // 3. Se estiver limpo, apaga definitivamente!
         await MarketProduct.findByIdAndDelete(req.params.id);
-        res.json({ mensagem: 'Produto removido do sistema.' });
+        res.json({ mensagem: 'Produto destruído e removido.' });
     } catch (e) { res.status(500).json({ erro: 'Erro ao remover produto.' }); }
 });
 
 router.get('/contratos', auth, adminAuth, async (req, res) => {
     try {
-        // 🚀 ADMIN VÊ TUDO PARA PODER MONITORAR QUEM VAI TER O CONTRATO MAIS LONGO
         const contratos = await MarketContract.find().sort({ dataFim: -1 });
         res.json(contratos);
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar contratos.' }); }
