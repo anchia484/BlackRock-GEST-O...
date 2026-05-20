@@ -68,32 +68,35 @@ router.post('/register', async (req, res) => {
         res.status(500).json({ erro: 'Erro no servidor' }); 
     }
 });
-
 // ==========================================
-// LOGIN (COM TOKEN DE VIDA CURTA)
-// ==========================================
+// LOGIN (BLINDADO E TOLERANTE)
 router.post('/login', async (req, res) => {
     try {
         const { nome, telefone, senha } = req.body;
         if (!nome || !telefone || !senha) return res.status(400).json({ erro: 'Preencha Nome, Número e Senha.' });
 
-        const usuario = await User.findOne({ telefone });
-        if (!usuario || usuario.nome !== nome) return res.status(400).json({ erro: 'Credenciais inválidas.' });
+        // 1. Busca apenas pelo telefone (o identificador único)
+        const usuario = await User.findOne({ telefone: telefone.trim() });
+        
+        // 2. Compara o nome de forma inteligente (ignora espaços extras e maiúsculas/minúsculas)
+        const nomeIgual = usuario && usuario.nome.trim().toLowerCase() === nome.trim().toLowerCase();
+
+        if (!usuario || !nomeIgual) {
+            return res.status(400).json({ erro: 'Credenciais inválidas.' });
+        }
 
         const senhaValida = await bcrypt.compare(senha, usuario.senha);
         if (!senhaValida) return res.status(400).json({ erro: 'Senha incorreta.' });
 
-        // Token do usuário morre em exatos 20 minutos (Segurança Financeira)
         const token = jwt.sign({ id: usuario._id, isAdmin: usuario.isAdmin }, process.env.JWT_SECRET, { expiresIn: '20m' });
         
         res.json({ 
             token, 
-            precisaTrocarSenha: usuario.precisaTrocarSenha, 
+            precisaTrocarSenha: usuario.precisaTrocarSenha,
             usuario: { nome: usuario.nome, idUnico: usuario.idUnico, saldo: usuario.saldo, plano: usuario.planoAtivo, isAdmin: usuario.isAdmin } 
         });
     } catch (erro) { res.status(500).json({ erro: 'Erro no servidor' }); }
 });
-
 // ==========================================
 // RECUPERAÇÃO E PERFIL
 // ==========================================
