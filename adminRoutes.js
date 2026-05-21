@@ -136,69 +136,42 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         const { transacaoId, acao, motivoRejeicao } = req.body;
         const motivoTexto = acao === 'rejeitado' ? (motivoRejeicao || 'Não cumpre os requisitos do sistema.') : null;
 
-        // 🛡️ TRINCHEIRA 1: Operação Atómica para garantir que apenas 1 clique altera o status
         const transacao = await Transaction.findOneAndUpdate(
             { _id: transacaoId, status: 'pendente' },
             { $set: { status: acao, motivoRejeicao: motivoTexto } },
-            { new: true } // Retorna a transação já fechada
+            { new: true } 
         );
 
-        if (!transacao) {
-            return res.status(400).json({ erro: 'Transação já foi processada ou bloqueada pelo sistema anti-fraude.' });
-        }
+        if (!transacao) return res.status(400).json({ erro: 'Transação já foi processada ou bloqueada.' });
 
         let tituloNotif = ''; let mensagemNotif = '';
         let usuarioAtualizado = null;
 
-        // 🛡️ TRINCHEIRA 2: Operação Atómica ($inc) para evitar injecão duplicada
         if (acao === 'aprovado') {
             if (transacao.tipo === 'deposito') {
-                usuarioAtualizado = await User.findByIdAndUpdate(
-                    transacao.usuarioId,
-                    { $inc: { saldo: transacao.valor } },
-                    { new: true }
-                );
-                tituloNotif = 'Depósito Aprovado ✅';
-                mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
+                usuarioAtualizado = await User.findByIdAndUpdate(transacao.usuarioId, { $inc: { saldo: transacao.valor } }, { new: true });
+                tituloNotif = 'Depósito Aprovado ✅'; mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
             } else if (transacao.tipo === 'saque') {
-                // No saque aprovado o dinheiro já saiu no momento do pedido, não altera saldo.
                 usuarioAtualizado = await User.findById(transacao.usuarioId);
-                tituloNotif = 'Levantamento Aprovado 💸';
-                mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
+                tituloNotif = 'Levantamento Aprovado 💸'; mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
             }
         } 
         else if (acao === 'rejeitado') {
             if (transacao.tipo === 'saque') {
-                // ESTORNO ATÓMICO: Devolve o dinheiro à conta sem duplicar
-                usuarioAtualizado = await User.findByIdAndUpdate(
-                    transacao.usuarioId,
-                    { $inc: { saldo: transacao.valor } },
-                    { new: true }
-                );
-                tituloNotif = 'Levantamento Rejeitado ❌';
-                mensagemNotif = `O seu levantamento foi rejeitado e o valor foi devolvido ao saldo. Motivo: ${transacao.motivoRejeicao}`;
+                usuarioAtualizado = await User.findByIdAndUpdate(transacao.usuarioId, { $inc: { saldo: transacao.valor } }, { new: true });
+                tituloNotif = 'Levantamento Rejeitado ❌'; mensagemNotif = `O seu levantamento foi rejeitado e o valor devolvido. Motivo: ${transacao.motivoRejeicao}`;
             } else if (transacao.tipo === 'deposito') {
                 usuarioAtualizado = await User.findById(transacao.usuarioId);
-                tituloNotif = 'Depósito Rejeitado ❌';
-                mensagemNotif = `O seu depósito foi rejeitado. Motivo: ${transacao.motivoRejeicao}`;
+                tituloNotif = 'Depósito Rejeitado ❌'; mensagemNotif = `O seu depósito foi rejeitado. Motivo: ${transacao.motivoRejeicao}`;
             }
         }
 
         if (usuarioAtualizado && tituloNotif !== '') {
-            await new Notification({ 
-                usuarioId: usuarioAtualizado._id, 
-                titulo: tituloNotif, 
-                mensagem: mensagemNotif, 
-                tipo: 'financeiro', 
-                lida: false 
-            }).save();
+            await new Notification({ usuarioId: usuarioAtualizado._id, titulo: tituloNotif, mensagem: mensagemNotif, tipo: 'financeiro', lida: false }).save();
         }
 
         res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
-    } catch (e) { 
-        console.error("Erro Processar Transação:", e);
-        res.status(500).json({ erro: 'Falha no servidor ao processar transação.' }); 
-    }
+    } catch (e) { res.status(500).json({ erro: 'Falha no servidor ao processar transação.' }); }
 });
 
 // ==========================================
@@ -212,53 +185,71 @@ router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro na busca.' }); }
 });
 
+// 🚀 AQUI ESTÁ O NOVO MOTOR BLINDADO QUE LHE DÁ CONTROLO TOTAL
 router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
     try {
         const { userId, acao, valor, novaSenha } = req.body;
         
-        let u = await User.findById(userId);
-        if (!u) return res.status(404).json({ erro: 'Não encontrado.' });
+        const u = await User.findById(userId);
+        if (!u) return res.status(404).json({ erro: 'Cliente não encontrado.' });
+        
+        // 🛡️ A sua proteção de Diretor continua ativada
         if (u.isAdmin) return res.status(403).json({ erro: 'Não pode alterar outro Diretor.' });
 
-        if (acao === 'bloquear') { u.status = 'bloqueado'; await u.save(); }
-        if (acao === 'desbloquear') { u.status = 'ativo'; await u.save(); }
-        if (acao === 'analise') { u.status = 'analise'; await u.save(); }
-        
-        if (acao === 'saldo_add') {
+        if (acao === 'bloquear') { 
+            await User.findByIdAndUpdate(userId, { status: 'bloqueado' }); 
+        }
+        else if (acao === 'desbloquear') { 
+            await User.findByIdAndUpdate(userId, { status: 'ativo' }); 
+        }
+        else if (acao === 'analise') { 
+            await User.findByIdAndUpdate(userId, { status: 'analise' }); 
+        }
+        else if (acao === 'saldo_add') {
             const valorAdd = Number(Number(valor).toFixed(2));
-            u = await User.findByIdAndUpdate(u._id, { $inc: { saldo: valorAdd } }, { new: true });
+            if(isNaN(valorAdd) || valorAdd <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+
+            const userAtualizado = await User.findByIdAndUpdate(userId, { $inc: { saldo: valorAdd } }, { new: true });
+            
             await new Transaction({
-                usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
+                usuarioId: userAtualizado._id, nomeUsuario: userAtualizado.nome, idUnicoUsuario: userAtualizado.idUnico, telefoneUsuario: userAtualizado.telefone,
                 tipo: 'deposito', valor: valorAdd, status: 'aprovado',
                 operadora: 'Ajuste Admin', idTransacaoBancaria: 'ADM-ADD-' + Date.now()
             }).save();
         }
-        if (acao === 'saldo_rem') {
+        else if (acao === 'saldo_rem') {
             const valorRem = Number(Number(valor).toFixed(2));
-            if(u.saldo < valorRem) return res.status(400).json({ erro: 'Saldo insuficiente no usuário.' });
+            if(isNaN(valorRem) || valorRem <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
+            if(u.saldo < valorRem) return res.status(400).json({ erro: 'O cliente não tem saldo suficiente para esta remoção.' });
             
-            u = await User.findOneAndUpdate(
-                { _id: u._id, saldo: { $gte: valorRem } },
+            const userAtualizado = await User.findOneAndUpdate(
+                { _id: userId, saldo: { $gte: valorRem } },
                 { $inc: { saldo: -valorRem } },
                 { new: true }
             );
-            if(!u) return res.status(400).json({ erro: 'Falha na dedução atómica.' });
+            if(!userAtualizado) return res.status(400).json({ erro: 'Falha ao remover saldo. O saldo do cliente pode ter mudado.' });
 
             await new Transaction({
-                usuarioId: u._id, nomeUsuario: u.nome, idUnicoUsuario: u.idUnico, telefoneUsuario: u.telefone,
+                usuarioId: userAtualizado._id, nomeUsuario: userAtualizado.nome, idUnicoUsuario: userAtualizado.idUnico, telefoneUsuario: userAtualizado.telefone,
                 tipo: 'saque', valor: valorRem, status: 'aprovado',
                 operadora: 'Ajuste Admin', numeroContaDestino: 'Removido pela Diretoria'
             }).save();
         }
-        if (acao === 'senha_reset') {
+        else if (acao === 'senha_reset') {
+            if(!novaSenha || novaSenha.length < 6) return res.status(400).json({ erro: 'A senha deve ter no mínimo 6 caracteres.' });
             const salt = await bcrypt.genSalt(10);
-            u.senha = await bcrypt.hash(novaSenha, salt);
-            u.precisaTrocarSenha = true;
-            await u.save();
+            const hash = await bcrypt.hash(novaSenha, salt);
+            await User.findByIdAndUpdate(userId, { senha: hash, precisaTrocarSenha: true });
+        } else {
+            return res.status(400).json({ erro: 'Ação não reconhecida.' });
         }
         
         res.json({ mensagem: 'Ação executada com sucesso e registada na auditoria.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro na ação administrativa.' }); }
+    } catch (e) { 
+        console.error("ERRO PAINEL ADMIN:", e);
+        // O ecrã vai agora mostrar o motivo exato se algo voltar a falhar!
+        res.status(500).json({ erro: 'Falha interna: ' + e.message }); 
+    }
 });
 
 // ==========================================
@@ -387,7 +378,7 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         };
 
         if (id) {
-            await Plan.findByIdAndUpdate(id, dadosPlano);
+await Plan.findByIdAndUpdate(id, dadosPlano);
             res.json({ mensagem: 'Node atualizado com sucesso.' });
         } else {
             const existe = await Plan.findOne({ nome });
@@ -542,12 +533,12 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
         res.json(chat);
     } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
 });
+
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const { usuarioId, texto } = req.body;
         if(!texto) return res.status(400).json({ erro: 'Mensagem vazia' });
-        
-        const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
+const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
         await msg.save();
 
         await new Notification({
