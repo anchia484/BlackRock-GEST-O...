@@ -17,7 +17,7 @@ router.get('/dashboard', auth, async (req, res) => {
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
         // =================================================================
-        // 🚀 LAZY VALIDATION BLINDADA & INTEGRADA (4 PASSOS COMPLETOS)
+        // 🚀 GATILHO DE LIQUIDAÇÃO (4 PASSOS COMPLETOS E SINCRONIZADOS)
         // =================================================================
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
@@ -28,7 +28,7 @@ router.get('/dashboard', auth, async (req, res) => {
 
         if (contratosConcluidos.length > 0) {
             for (let contrato of contratosConcluidos) {
-                // 🛡️ TRANSAÇÃO ATÓMICA: Atualiza para 'concluido' respeitando o Schema
+                // 🛡️ 1. TRANSAÇÃO ATÓMICA: Atualiza para 'concluido' (Palavra exata do Schema)
                 const contratoSelado = await MarketContract.findOneAndUpdate(
                     { _id: contrato._id, status: 'ativo' }, 
                     { $set: { status: 'concluido' } },
@@ -38,12 +38,12 @@ router.get('/dashboard', auth, async (req, res) => {
                 if (contratoSelado) {
                     const lucroLiquido = Number((contratoSelado.valorRetorno - contratoSelado.valorAplicado).toFixed(2));
 
-                    // 💰 1. Incrementa o Saldo Principal
+                    // 💰 2. Injeta Saldo Principal
                     await User.findByIdAndUpdate(userId, {
                         $inc: { saldo: contratoSelado.valorRetorno, saldoPrincipal: contratoSelado.valorRetorno }
                     });
 
-                    // 🧾 2. Gera o recibo como 'deposito' para forçar a exibição no historico.html
+                    // 🧾 3. Gera o recibo oficial no Histórico (Como Depósito para o ecrã ler)
                     await new Transaction({
                         usuarioId: usuario._id,
                         nomeUsuario: usuario.nome,
@@ -57,7 +57,7 @@ router.get('/dashboard', auth, async (req, res) => {
                         idTransacaoBancaria: 'MKT-RET-' + Date.now()
                     }).save();
 
-                    // 🔔 3. Dispara o Alerta no Sino de Notificações
+                    // 🔔 4. Dispara o Alerta no Sino de Notificações
                     await Notification.create({
                         usuarioId: userId,
                         titulo: 'Contrato Finalizado 📈',
@@ -66,7 +66,7 @@ router.get('/dashboard', auth, async (req, res) => {
                         lida: false
                     });
 
-                    // Atualiza a memória de instância local
+                    // Atualiza a memória local para o ecrã carregar imediatamente
                     usuario.saldo += contratoSelado.valorRetorno; 
                 }
             }
@@ -85,22 +85,18 @@ router.get('/dashboard', auth, async (req, res) => {
         inicioSemana.setHours(0, 0, 0, 0);
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
-        // 🚀 INCLUI OS 'deposito' COM MARCADOR DO MERCADO NA CAPTURA DE LUCROS
+        // =================================================================
+        // 🧮 MATEMÁTICA DO DASHBOARD: TAREFAS E BÓNUS NORMAIS
+        // =================================================================
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
-            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito', 'retorno_mercado', 'deposito'] },
+            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito'] },
             status: { $in: ['aprovado', 'concluido'] }
         });
 
-        let ganhosHoje = 0, ganhosSemana = 0, ganhosMes = 0, ganhosTotal = 0;
-        let historicoBonusTotal = 0; 
+        let ganhosHoje = 0, ganhosSemana = 0, ganhosMes = 0, ganhosTotal = 0, historicoBonusTotal = 0; 
 
         transacoesLucro.forEach(t => {
-            // Se for um depósito comum de fora do mercado, o sistema ignora dos contadores de ganho
-            if (t.tipo === 'deposito' && t.operadora !== 'Mercado Premium') {
-                return;
-            }
-
             const dataT = new Date(t.createdAt).getTime();
             const valor = Number(t.valor) || 0;
             
@@ -112,6 +108,24 @@ router.get('/dashboard', auth, async (req, res) => {
             if (t.tipo === 'bonus_rede' || t.tipo === 'comissao' || t.tipo === 'bonus_deposito') {
                 historicoBonusTotal += valor;
             }
+        });
+
+        // =================================================================
+        // 🚀 MATEMÁTICA DO DASHBOARD: EXTRAI APENAS O LUCRO DO MERCADO
+        // =================================================================
+        const contratosFinalizados = await MarketContract.find({
+            usuarioId: userId,
+            status: 'concluido'
+        });
+
+        contratosFinalizados.forEach(c => {
+            const dataT = new Date(c.updatedAt).getTime(); // Usa a data em que finalizou
+            const lucroPuro = Number(c.valorRetorno) - Number(c.valorAplicado);
+            
+            ganhosTotal += lucroPuro;
+            if (dataT >= inicioMes) ganhosMes += lucroPuro;
+            if (dataT >= inicioSemana) ganhosSemana += lucroPuro;
+            if (dataT >= inicioHoje) ganhosHoje += lucroPuro;
         });
 
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
