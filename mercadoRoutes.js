@@ -5,17 +5,16 @@ const MarketContract = require('./MarketContract');
 const MarketConfig = require('./MarketConfig');
 const User = require('./User'); 
 const Transaction = require('./Transaction'); 
-const Notification = require('./Notification'); // 🚀 NOVO: Módulo de Notificações importado!
+const Notification = require('./Notification'); 
 const auth = require('./authMiddleware');
 
 // ====================================================================
-// 🚀 GATILHO DE LIQUIDAÇÃO (SINCRONIZAÇÃO COMPLETA DE 4 PASSOS)
+// 🚀 GATILHO DE LIQUIDAÇÃO (ALINHADO COM 'concluido' + 4 PASSOS)
 // ====================================================================
 async function liquidarContratosExpirados(usuarioId) {
     try {
         const agora = new Date();
         
-        // Encontra todos os contratos do cliente que já passaram da hora e estão pendentes
         const expirados = await MarketContract.find({
             usuarioId: usuarioId,
             status: 'ativo',
@@ -23,44 +22,39 @@ async function liquidarContratosExpirados(usuarioId) {
         });
 
         for (let contrato of expirados) {
-            // TRANSAÇÃO ATÓMICA: Fecha o contrato para não pagar duas vezes
+            // 🛡️ CORREÇÃO CRÍTICA: Alinhado para 'concluido' conforme o Schema e userRoutes
             const contratoFechado = await MarketContract.findOneAndUpdate(
                 { _id: contrato._id, status: 'ativo' },
-                { $set: { status: 'finalizado' } },
+                { $set: { status: 'concluido' } }, 
                 { new: true }
             );
 
             if (contratoFechado) {
-                // 🧮 MATEMÁTICA INTELIGENTE: Separa o que é lucro do que é capital devolvido
                 const lucroLiquido = Number((contratoFechado.valorRetorno - contratoFechado.valorAplicado).toFixed(2));
 
-                // 💰 1 & 2. Injeta Saldo e Atualiza Contadores do Dashboard (Ganhos)
+                // 💰 1. Atualiza o Saldo Bruto na Conta do Utilizador
                 await User.findByIdAndUpdate(usuarioId, {
                     $inc: { 
                         saldo: contratoFechado.valorRetorno, 
-                        saldoPrincipal: contratoFechado.valorRetorno,
-                        ganhosHoje: lucroLiquido,
-                        ganhoHoje: lucroLiquido, // Cobre variações de nome no BD
-                        ganhosSemana: lucroLiquido,
-                        ganhosMes: lucroLiquido,
-                        ganhosTotais: lucroLiquido,
-                        ganhoTotal: lucroLiquido // Cobre variações de nome no BD
+                        saldoPrincipal: contratoFechado.valorRetorno
                     }
                 });
 
-                // 🧾 3. Gera o recibo detalhado no Histórico do cliente
-                await Transaction.create({
+                // 🧾 2. Injeta o Recibo Real para alimentar a página historico.html
+                await new Transaction({
                     usuarioId: usuarioId,
                     nomeUsuario: contratoFechado.nomeUsuario,
                     idUnicoUsuario: contratoFechado.idUnicoUsuario,
-                    tipo: 'retorno_mercado',
+                    telefoneUsuario: contratoFechado.telefoneUsuario || '',
+                    tipo: 'deposito',
                     valor: contratoFechado.valorRetorno,
                     status: 'concluido',
                     operadora: 'Mercado Premium',
-                    numeroContaDestino: contratoFechado.nomeProduto // Grava o nome do contrato no histórico
-                });
+                    numeroContaDestino: contratoFechado.nomeProduto,
+                    idTransacaoBancaria: 'MKT-RET-' + Date.now()
+                }).save();
 
-                // 🔔 4. Dispara a Notificação Vermelha no Sino
+                // 🔔 3. Dispara o Alerta no Sino de Notificações
                 await Notification.create({
                     usuarioId: usuarioId,
                     titulo: 'Contrato Finalizado 📈',
@@ -79,23 +73,15 @@ async function liquidarContratosExpirados(usuarioId) {
 // ROTAS DOS CLIENTES (A VITRINE E OS CONTRATOS)
 // ====================================================================
 
-// 1. CARREGAR A VITRINE (E Pagar atrasados)
 router.get('/vitrine', auth, async (req, res) => {
     try {
         await liquidarContratosExpirados(req.usuario.id); 
-        
         const config = await MarketConfig.findOne() || { isMercadoAberto: false, dataFechamento: null };
         const produtos = await MarketProduct.find({ status: 'ativo' }).sort({ valorMinimo: 1 });
-        
-        res.json({
-            isMercadoAberto: config.isMercadoAberto,
-            dataFechamento: config.dataFechamento,
-            produtos: produtos
-        });
+        res.json({ isMercadoAberto: config.isMercadoAberto, dataFechamento: config.dataFechamento, produtos });
     } catch (e) { res.status(500).json({ erro: 'Erro ao carregar mercado.' }); }
 });
 
-// 2. MEUS CONTRATOS
 router.get('/meus-contratos', auth, async (req, res) => {
     try {
         await liquidarContratosExpirados(req.usuario.id); 
@@ -104,7 +90,6 @@ router.get('/meus-contratos', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro ao buscar contratos.' }); }
 });
 
-// 3. FEED AO VIVO
 router.get('/feed-vivo', auth, async (req, res) => {
     try {
         const produtos = await MarketProduct.find({ status: 'ativo' }).select('nome');
@@ -113,9 +98,6 @@ router.get('/feed-vivo', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro no feed vivo.' }); }
 });
 
-// ====================================================================
-// 🚀 ASSINATURA DE CONTRATO
-// ====================================================================
 router.post('/investir', auth, async (req, res) => {
     try {
         const { produtoId, valorAplicado } = req.body;
@@ -130,7 +112,7 @@ router.post('/investir', auth, async (req, res) => {
         if (!produto) return res.status(404).json({ erro: 'Contrato não disponível.' });
 
         if (valorNumerico < produto.valorMinimo) return res.status(400).json({ erro: `Mínimo: ${produto.valorMinimo} MZN.` });
-        if (produto.valorMaximo && valorNumerico > produto.valorMaximo) return res.status(400).json({ erro: `Máximo: ${produto.valorMaximo} MZN.` });
+        if (produto.valorMaximo && valorNumerico > produto.valorMaximo) return res.status(400).json({ erro: `Maximum: ${produto.valorMaximo} MZN.` });
 
         const usuario = await User.findOneAndUpdate(
             { _id: req.usuario.id, saldo: { $gte: valorNumerico } },
