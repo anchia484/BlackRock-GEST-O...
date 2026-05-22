@@ -44,7 +44,6 @@ router.post('/deposito', auth, async (req, res) => {
         const userId = getUserId(req);
         const { canal, numeroOrigem, valor, idTransacaoBancaria, comprovanteBase64, senhaConfirmacao } = req.body;
 
-        // PROTEÇÃO ESTRITA DE PONTO FLUTUANTE (Força 2 casas decimais para evitar anomalias matemáticas)
         const valorNumerico = Number(Number(valor).toFixed(2));
         
         if (isNaN(valorNumerico) || valorNumerico <= 0) {
@@ -70,7 +69,6 @@ router.post('/deposito', auth, async (req, res) => {
             valor: valorNumerico, 
             status: 'pendente',
             operadora: operadoraFormatada,
-            
             numeroOrigem: numeroOrigem, 
             idTransacaoBancaria,
             comprovanteBase64
@@ -78,7 +76,6 @@ router.post('/deposito', auth, async (req, res) => {
 
         await novaTransacao.save();
 
-        // NOTIFICAÇÃO DE DEPÓSITO
         try {
             const novaNotif = new Notification({
                 usuarioId: usuario._id,
@@ -106,7 +103,6 @@ router.post('/saque', auth, async (req, res) => {
         const userId = getUserId(req);
         const { numeroContaDestino, nomeContaDestino, valor, senhaConfirmacao, operadora } = req.body;
 
-        // PROTEÇÃO ESTRITA DE PONTO FLUTUANTE E VALORES
         const valorSaqueBruto = Number(Number(valor).toFixed(2));
         
         if (isNaN(valorSaqueBruto) || valorSaqueBruto <= 0) {
@@ -126,9 +122,6 @@ router.post('/saque', auth, async (req, res) => {
             return res.status(403).json({ erro: 'Saques desativados temporariamente pela Diretoria.' });
         }
 
-        // ====================================================================
-        // 🛡️ BLINDAGEM ADICIONAL: VALIDAÇÃO DE HORÁRIO COMERCIAL NO SERVIDOR
-        // ====================================================================
         if (config.saqueAbre && config.saqueFecha) {
             const agora = new Date();
             const horaAtual = agora.getHours() + (agora.getMinutes() / 60);
@@ -151,9 +144,6 @@ router.post('/saque', auth, async (req, res) => {
             return res.status(400).json({ erro: `Mínimo para saque: ${limiteMinimo} MZN` });
         }
 
-        // ====================================================================
-        // 🚀 OPERAÇÃO ATÓMICA (PREVINE DUPLO SAQUE / RACE CONDITION)
-        // ====================================================================
         const usuarioAtualizado = await User.findOneAndUpdate(
             { _id: usuario._id, saldo: { $gte: valorSaqueBruto } },
             { $inc: { saldo: -valorSaqueBruto } },
@@ -161,10 +151,9 @@ router.post('/saque', auth, async (req, res) => {
         );
 
         if (!usuarioAtualizado) {
-            return res.status(400).json({ erro: 'Saldo insuficiente ou transação simultânea bloqueada pelo sistema de segurança.' });
+            return res.status(400).json({ erro: 'Saldo insuficiente ou transação simultânea bloqueada.' });
         }
 
-        // PUXA A TAXA REAL DO SISTEMA (CONGELAMENTO E PRECISÃO)
         const taxaAtual = config.saqueTaxa ?? 10;
         const valorTaxa = Number(((valorSaqueBruto * taxaAtual) / 100).toFixed(2));
         const valorLiquido = Number((valorSaqueBruto - valorTaxa).toFixed(2));
@@ -187,7 +176,6 @@ router.post('/saque', auth, async (req, res) => {
 
         await novaTransacao.save();
 
-        // NOTIFICAÇÃO DE SAQUE 
         try {
             const novaNotif = new Notification({
                 usuarioId: usuarioAtualizado._id,
@@ -216,6 +204,7 @@ router.post('/saque', auth, async (req, res) => {
 router.get('/historico', auth, async (req, res) => {
     try {
         const userId = getUserId(req);
+        // Coleta tudo ordenando por data decrescente
         const historico = await Transaction.find({ usuarioId: userId }).sort({ createdAt: -1 });
         res.json(historico);
     } catch (erro) {

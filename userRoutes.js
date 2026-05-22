@@ -17,7 +17,7 @@ router.get('/dashboard', auth, async (req, res) => {
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
         // =================================================================
-        // 🚀 LAZY VALIDATION BLINDADA (PREVENÇÃO DE DUPLO GASTO / RACE CONDITION)
+        // 🚀 LAZY VALIDATION BLINDADA & INTEGRADA (4 PASSOS COMPLETOS)
         // =================================================================
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
@@ -28,32 +28,45 @@ router.get('/dashboard', auth, async (req, res) => {
 
         if (contratosConcluidos.length > 0) {
             for (let contrato of contratosConcluidos) {
-                // 🛡️ TRANSAÇÃO ATÓMICA: Tranca e muda o status. Só avança se ninguém mais tocou.
+                // 🛡️ TRANSAÇÃO ATÓMICA: Atualiza para 'concluido' respeitando o Schema
                 const contratoSelado = await MarketContract.findOneAndUpdate(
                     { _id: contrato._id, status: 'ativo' }, 
                     { $set: { status: 'concluido' } },
                     { new: true }
                 );
 
-                // Se o contrato foi selado com sucesso nesta exata fração de segundo, injeta o dinheiro
                 if (contratoSelado) {
+                    const lucroLiquido = Number((contratoSelado.valorRetorno - contratoSelado.valorAplicado).toFixed(2));
+
+                    // 💰 1. Incrementa o Saldo Principal
                     await User.findByIdAndUpdate(userId, {
-                        $inc: { saldo: contratoSelado.valorRetorno }
+                        $inc: { saldo: contratoSelado.valorRetorno, saldoPrincipal: contratoSelado.valorRetorno }
                     });
 
+                    // 🧾 2. Gera o recibo como 'deposito' para forçar a exibição no historico.html
                     await new Transaction({
                         usuarioId: usuario._id,
                         nomeUsuario: usuario.nome,
                         idUnicoUsuario: usuario.idUnico,
                         telefoneUsuario: usuario.telefone,
-                        tipo: 'retorno_mercado', 
+                        tipo: 'deposito', 
                         valor: contratoSelado.valorRetorno,
                         status: 'concluido',
-                        operadora: 'BlackRock Premium',
+                        operadora: 'Mercado Premium',
+                        numeroContaDestino: contratoSelado.nomeProduto,
                         idTransacaoBancaria: 'MKT-RET-' + Date.now()
                     }).save();
 
-                    // Atualiza a memória local para o Dashboard refletir imediatamente
+                    // 🔔 3. Dispara o Alerta no Sino de Notificações
+                    await Notification.create({
+                        usuarioId: userId,
+                        titulo: 'Contrato Finalizado 📈',
+                        mensagem: `A operação ${contratoSelado.nomeProduto} encerrou com sucesso! O seu capital e o lucro de +${lucroLiquido} MZN foram creditados na sua conta.`,
+                        tipo: 'financeiro',
+                        lida: false
+                    });
+
+                    // Atualiza a memória de instância local
                     usuario.saldo += contratoSelado.valorRetorno; 
                 }
             }
@@ -72,9 +85,10 @@ router.get('/dashboard', auth, async (req, res) => {
         inicioSemana.setHours(0, 0, 0, 0);
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
+        // 🚀 INCLUI OS 'deposito' COM MARCADOR DO MERCADO NA CAPTURA DE LUCROS
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
-            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito', 'retorno_mercado'] },
+            tipo: { $in: ['ganho_tarefa', 'bonus_rede', 'comissao', 'bonus_deposito', 'retorno_mercado', 'deposito'] },
             status: { $in: ['aprovado', 'concluido'] }
         });
 
@@ -82,6 +96,11 @@ router.get('/dashboard', auth, async (req, res) => {
         let historicoBonusTotal = 0; 
 
         transacoesLucro.forEach(t => {
+            // Se for um depósito comum de fora do mercado, o sistema ignora dos contadores de ganho
+            if (t.tipo === 'deposito' && t.operadora !== 'Mercado Premium') {
+                return;
+            }
+
             const dataT = new Date(t.createdAt).getTime();
             const valor = Number(t.valor) || 0;
             
