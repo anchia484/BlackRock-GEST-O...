@@ -17,7 +17,7 @@ router.get('/dashboard', auth, async (req, res) => {
         if (!usuario) return res.status(404).json({ erro: 'Conta não localizada.' });
 
         // =================================================================
-        // 🚀 GATILHO DE LIQUIDAÇÃO (4 PASSOS COMPLETOS E SINCRONIZADOS)
+        // 🚀 GATILHO DE LIQUIDAÇÃO DE COCKPIT (STATUS: 'concluido')
         // =================================================================
         const agora = new Date();
         const contratosConcluidos = await MarketContract.find({
@@ -28,7 +28,6 @@ router.get('/dashboard', auth, async (req, res) => {
 
         if (contratosConcluidos.length > 0) {
             for (let contrato of contratosConcluidos) {
-                // 🛡️ 1. TRANSAÇÃO ATÓMICA: Atualiza para 'concluido' (Palavra exata do Schema)
                 const contratoSelado = await MarketContract.findOneAndUpdate(
                     { _id: contrato._id, status: 'ativo' }, 
                     { $set: { status: 'concluido' } },
@@ -38,12 +37,12 @@ router.get('/dashboard', auth, async (req, res) => {
                 if (contratoSelado) {
                     const lucroLiquido = Number((contratoSelado.valorRetorno - contratoSelado.valorAplicado).toFixed(2));
 
-                    // 💰 2. Injeta Saldo Principal
+                    // 💰 Incrementa o Saldo Principal
                     await User.findByIdAndUpdate(userId, {
                         $inc: { saldo: contratoSelado.valorRetorno, saldoPrincipal: contratoSelado.valorRetorno }
                     });
 
-                    // 🧾 3. Gera o recibo oficial no Histórico (Como Depósito para o ecrã ler)
+                    // 🧾 Recibo Real para o Histórico (tipo 'deposito' lido pelo frontend)
                     await new Transaction({
                         usuarioId: usuario._id,
                         nomeUsuario: usuario.nome,
@@ -57,7 +56,7 @@ router.get('/dashboard', auth, async (req, res) => {
                         idTransacaoBancaria: 'MKT-RET-' + Date.now()
                     }).save();
 
-                    // 🔔 4. Dispara o Alerta no Sino de Notificações
+                    // 🔔 Dispara o Alerta no Sino de Notificações
                     await Notification.create({
                         usuarioId: userId,
                         titulo: 'Contrato Finalizado 📈',
@@ -66,7 +65,6 @@ router.get('/dashboard', auth, async (req, res) => {
                         lida: false
                     });
 
-                    // Atualiza a memória local para o ecrã carregar imediatamente
                     usuario.saldo += contratoSelado.valorRetorno; 
                 }
             }
@@ -86,7 +84,7 @@ router.get('/dashboard', auth, async (req, res) => {
         const inicioMes = new Date(agora.getFullYear(), agora.getMonth(), 1).setHours(0, 0, 0, 0);
 
         // =================================================================
-        // 🧮 MATEMÁTICA DO DASHBOARD: TAREFAS E BÓNUS NORMAIS
+        // 🧮 TAREFAS E BÓNUS NORMAIS
         // =================================================================
         const transacoesLucro = await Transaction.find({
             usuarioId: userId,
@@ -111,39 +109,31 @@ router.get('/dashboard', auth, async (req, res) => {
         });
 
         // =================================================================
-        // 🚀 MATEMÁTICA DO DASHBOARD: EXTRAI APENAS O LUCRO DO MERCADO
+        // 🚀 CÁLCULO EXCLUSIVO DO MERCADO PREMIUM (APENAS O LUCRO LÍQUIDO!)
         // =================================================================
-        const contratosFinalizados = await MarketContract.find({
+        const contratosMercado = await MarketContract.find({
             usuarioId: userId,
-            status: 'concluido'
+            status: { $in: ['concluido', 'finalizado'] }
         });
 
-        contratosFinalizados.forEach(c => {
-            const dataT = new Date(c.updatedAt).getTime(); // Usa a data em que finalizou
+        contratosMercado.forEach(c => {
+            const dataT = new Date(c.updatedAt || c.createdAt).getTime();
             const lucroPuro = Number(c.valorRetorno) - Number(c.valorAplicado);
             
-            ganhosTotal += lucroPuro;
-            if (dataT >= inicioMes) ganhosMes += lucroPuro;
-            if (dataT >= inicioSemana) ganhosSemana += lucroPuro;
-            if (dataT >= inicioHoje) ganhosHoje += lucroPuro;
+            if (lucroPuro > 0) {
+                ganhosTotal += lucroPuro;
+                if (dataT >= inicioMes) ganhosMes += lucroPuro;
+                if (dataT >= inicioSemana) ganhosSemana += lucroPuro;
+                if (dataT >= inicioHoje) ganhosHoje += lucroPuro;
+            }
         });
 
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
-
-        const configMercado = await MarketConfig.findOne();
-        const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
-        const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
-
-        const contratosEmAndamento = await MarketContract.countDocuments({ usuarioId: userId, status: 'ativo' });
-        const temContratoMercadoAtivo = contratosEmAndamento > 0;
 
         return res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
             planoDetails: planoDetails,
-            isMercadoAberto: mercadoAtivo,
-            dataFechamentoMercado: dataFechoMercado,
-            temContratoMercadoAtivo: temContratoMercadoAtivo,
             ganhos: { hoje: ganhosHoje, semana: ganhosSemana, mes: ganhosMes, total: ganhosTotal, bonus: historicoBonusTotal },
             equipa: { totalMembros: tamanhoEquipa }
         });
