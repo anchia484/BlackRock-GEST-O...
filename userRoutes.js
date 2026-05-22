@@ -130,10 +130,21 @@ router.get('/dashboard', auth, async (req, res) => {
 
         const tamanhoEquipa = await User.countDocuments({ convidadoPor: usuario.meuCodigoConvite });
 
+        // 🛡️ O CÓDIGO QUE FALTAVA FOI RESTAURADO AQUI:
+        const configMercado = await MarketConfig.findOne();
+        const mercadoAtivo = configMercado ? configMercado.isMercadoAberto : false;
+        const dataFechoMercado = configMercado ? configMercado.dataFechamento : null;
+
+        const contratosEmAndamento = await MarketContract.countDocuments({ usuarioId: userId, status: 'ativo' });
+        const temContratoMercadoAtivo = contratosEmAndamento > 0;
+
         return res.json({ 
             user: usuario, 
             unreadNotifications: totalNotificacoes,
             planoDetails: planoDetails,
+            isMercadoAberto: mercadoAtivo, // Agora o Dashboard sabe que está aberto!
+            dataFechamentoMercado: dataFechoMercado,
+            temContratoMercadoAtivo: temContratoMercadoAtivo,
             ganhos: { hoje: ganhosHoje, semana: ganhosSemana, mes: ganhosMes, total: ganhosTotal, bonus: historicoBonusTotal },
             equipa: { totalMembros: tamanhoEquipa }
         });
