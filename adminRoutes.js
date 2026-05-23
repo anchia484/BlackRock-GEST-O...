@@ -10,6 +10,7 @@ const Requirement = require('./Requirement');
 const Message = require('./Message');
 const System = require('./System');       
 const SystemLog = require('./SystemLog'); 
+const MarketContract = require('./MarketContract'); // 🚀 ADICIONADO PARA LIMPAR O MERCADO
 const auth = require('./authMiddleware');
 const router = express.Router();
 
@@ -36,7 +37,7 @@ const adminAuth = async (req, res, next) => {
 };
 
 // ==========================================
-// 1. DASHBOARD CORPORATIVO
+// 1. DASHBOARD CORPORATIVO E RESET NUCLEAR
 // ==========================================
 router.get('/dashboard', auth, adminAuth, async (req, res) => {
     try {
@@ -101,14 +102,47 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço.' }); }
 });
 
+// 🚀 O NOVO MOTOR DE LIMPEZA ABSOLUTA
 router.post('/reset-sistema', auth, adminAuth, async (req, res) => {
     try {
+        // 1. Destrói todas as transações, recibos financeiros e histórico
         await Transaction.deleteMany({});
+        
+        // 2. Destrói todos os contratos de teste do Mercado Premium
+        await MarketContract.deleteMany({});
+        
+        // 3. Limpa todas as mensagens do SAC e o Mural de Avisos (Feed)
         await Message.deleteMany({});
         await Feed.deleteMany({});
-        await User.updateMany({ isAdmin: { $ne: true } }, { $set: { saldo: 0, planoAtivo: 'Nenhum' } });
-        res.json({ mensagem: 'SISTEMA LIMPO!' });
-    } catch (e) { res.status(500).json({ erro: 'Falha ao resetar o sistema.' }); }
+        
+        // 4. Limpa todas as notificações e os registos de auditoria
+        await Notification.deleteMany({});
+        await SystemLog.deleteMany({});
+
+        // 5. Zera a fundo TODAS as carteiras e estatísticas dos clientes (Mantém as contas, apaga o dinheiro)
+        await User.updateMany(
+            { isAdmin: { $ne: true } }, 
+            { $set: { 
+                saldo: 0, 
+                saldoPrincipal: 0,
+                ganhosHoje: 0, 
+                ganhoHoje: 0,
+                ganhosSemana: 0, 
+                ganhosMes: 0, 
+                ganhosTotais: 0, 
+                ganhoTotal: 0,
+                planoAtivo: 'Nenhum',
+                convidadosN1: 0,
+                convidadosN2: 0,
+                convidadosN3: 0
+            } }
+        );
+
+        res.json({ mensagem: 'BOMBA NUCLEAR ATIVADA! Sistema 100% limpo para o Lançamento Oficial.' });
+    } catch (e) { 
+        console.error("Erro no Reset: ", e);
+        res.status(500).json({ erro: 'Falha ao resetar o sistema: ' + e.message }); 
+    }
 });
 
 router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
@@ -173,7 +207,7 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
 });
 
 // ==========================================
-// 4. GESTÃO DE USUÁRIOS E INJEÇÃO DE SALDO (CORRIGIDO E BLINDADO)
+// 4. GESTÃO DE USUÁRIOS E INJEÇÃO DE SALDO
 // ==========================================
 router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
     try {
@@ -187,7 +221,6 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
     try {
         const { userId, acao, valor, novaSenha } = req.body;
         
-        // Carga do Utilizador para Memória (Garante que u.nome existe)
         const u = await User.findById(userId);
         if (!u) return res.status(404).json({ erro: 'Cliente não encontrado.' });
         if (u.isAdmin) return res.status(403).json({ erro: 'Não pode alterar outro Diretor.' });
@@ -205,10 +238,8 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             const valorAdd = Number(Number(valor).toFixed(2));
             if(isNaN(valorAdd) || valorAdd <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
-            // Injeção de saldo direta (ignora falhas de schema)
             await User.findByIdAndUpdate(userId, { $inc: { saldo: valorAdd } });
             
-            // Regista o recibo usando os dados do 'u' carregado inicialmente!
             await new Transaction({
                 usuarioId: u._id, 
                 nomeUsuario: u.nome || 'Cliente', 
@@ -226,10 +257,8 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             if(isNaN(valorRem) || valorRem <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
             if(u.saldo < valorRem) return res.status(400).json({ erro: 'Saldo insuficiente.' });
             
-            // Remoção de saldo direta
             await User.findByIdAndUpdate(userId, { $inc: { saldo: -valorRem } });
 
-            // Regista o recibo de remoção
             await new Transaction({
                 usuarioId: u._id, 
                 nomeUsuario: u.nome || 'Cliente', 
@@ -381,7 +410,7 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
             await novo.save();
             res.json({ mensagem: 'Novo Node criado.' });
         }
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano.' }); }
+} catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano.' }); }
 });
 
 router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
@@ -458,7 +487,6 @@ router.patch('/notificacoes/ler', auth, adminAuth, async (req, res) => {
         res.json({ mensagem: 'Lido.' });
     } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
-
 router.delete('/notificacoes/limpar', auth, adminAuth, async (req, res) => {
     try { await Notification.deleteMany({}); res.json({ mensagem: 'Limpas.' }); } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
@@ -479,7 +507,7 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         else Object.assign(config, payload);
         
         await config.save();
-res.json({ mensagem: 'Configurações atualizadas.', config });
+        res.json({ mensagem: 'Configurações atualizadas.', config });
     } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
@@ -536,7 +564,7 @@ router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
 router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
     try {
         const planosDb = await Plan.find();
-        const usuariosAtivos = await User.find({ planoAtivo: { $ne: 'Nenhum' } });
+const usuariosAtivos = await User.find({ planoAtivo: { $ne: 'Nenhum' } });
         
         let totalInvestido = 0;
         const planosFormatados = planosDb.map(plano => {
