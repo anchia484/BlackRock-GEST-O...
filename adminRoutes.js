@@ -36,7 +36,7 @@ const adminAuth = async (req, res, next) => {
 };
 
 // ==========================================
-// 1. DASHBOARD CORPORATIVO (ESCALABILIDADE EXTREMA)
+// 1. DASHBOARD CORPORATIVO
 // ==========================================
 router.get('/dashboard', auth, adminAuth, async (req, res) => {
     try {
@@ -98,7 +98,7 @@ router.get('/dashboard', auth, adminAuth, async (req, res) => {
             ultimasAcoes: logs,
             chartData
         });
-    } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço e estatísticas.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Falha ao calcular balanço.' }); }
 });
 
 router.post('/reset-sistema', auth, adminAuth, async (req, res) => {
@@ -107,7 +107,7 @@ router.post('/reset-sistema', auth, adminAuth, async (req, res) => {
         await Message.deleteMany({});
         await Feed.deleteMany({});
         await User.updateMany({ isAdmin: { $ne: true } }, { $set: { saldo: 0, planoAtivo: 'Nenhum' } });
-        res.json({ mensagem: 'SISTEMA LIMPO! Plataforma pronta para o Lançamento Oficial.' });
+        res.json({ mensagem: 'SISTEMA LIMPO!' });
     } catch (e) { res.status(500).json({ erro: 'Falha ao resetar o sistema.' }); }
 });
 
@@ -119,14 +119,12 @@ router.get('/alertas-globais', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro nos alertas.' }); }
 });
 
-// ==============================================================
-// 3. MÓDULO FINANCEIRO CORPORATIVO (CAIXA FORTE BLINDADO ATÓMICO)
-// ==============================================================
+// ==========================================
+// 3. MÓDULO FINANCEIRO
+// ==========================================
 router.get('/transacoes-todas', auth, adminAuth, async (req, res) => {
     try {
-        const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } })
-                                            .sort({ createdAt: -1 })
-                                            .limit(300);
+        const transacoes = await Transaction.find({ tipo: { $in: ['deposito', 'saque'] } }).sort({ createdAt: -1 }).limit(300);
         res.json(transacoes);
     } catch (erro) { res.status(500).json({ erro: 'Erro ao buscar financeiro.' }); }
 });
@@ -142,7 +140,7 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             { new: true } 
         );
 
-        if (!transacao) return res.status(400).json({ erro: 'Transação já foi processada ou bloqueada.' });
+        if (!transacao) return res.status(400).json({ erro: 'Transação já foi processada.' });
 
         let tituloNotif = ''; let mensagemNotif = '';
         let usuarioAtualizado = null;
@@ -150,16 +148,16 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
         if (acao === 'aprovado') {
             if (transacao.tipo === 'deposito') {
                 usuarioAtualizado = await User.findByIdAndUpdate(transacao.usuarioId, { $inc: { saldo: transacao.valor } }, { new: true });
-                tituloNotif = 'Depósito Aprovado ✅'; mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado e creditado na sua conta.`;
+                tituloNotif = 'Depósito Aprovado ✅'; mensagemNotif = `O seu depósito de ${transacao.valor} MZN foi aprovado.`;
             } else if (transacao.tipo === 'saque') {
                 usuarioAtualizado = await User.findById(transacao.usuarioId);
-                tituloNotif = 'Levantamento Aprovado 💸'; mensagemNotif = `O seu levantamento foi aprovado e enviado para a sua conta ${transacao.operadora}.`;
+                tituloNotif = 'Levantamento Aprovado 💸'; mensagemNotif = `O seu levantamento foi aprovado.`;
             }
         } 
         else if (acao === 'rejeitado') {
             if (transacao.tipo === 'saque') {
                 usuarioAtualizado = await User.findByIdAndUpdate(transacao.usuarioId, { $inc: { saldo: transacao.valor } }, { new: true });
-                tituloNotif = 'Levantamento Rejeitado ❌'; mensagemNotif = `O seu levantamento foi rejeitado e o valor devolvido. Motivo: ${transacao.motivoRejeicao}`;
+                tituloNotif = 'Levantamento Rejeitado ❌'; mensagemNotif = `O seu levantamento foi rejeitado. Valor devolvido.`;
             } else if (transacao.tipo === 'deposito') {
                 usuarioAtualizado = await User.findById(transacao.usuarioId);
                 tituloNotif = 'Depósito Rejeitado ❌'; mensagemNotif = `O seu depósito foi rejeitado. Motivo: ${transacao.motivoRejeicao}`;
@@ -170,12 +168,12 @@ router.post('/processar-transacao', auth, adminAuth, async (req, res) => {
             await new Notification({ usuarioId: usuarioAtualizado._id, titulo: tituloNotif, mensagem: mensagemNotif, tipo: 'financeiro', lida: false }).save();
         }
 
-        res.json({ mensagem: 'Transação processada e utilizador notificado com sucesso!' });
-    } catch (e) { res.status(500).json({ erro: 'Falha no servidor ao processar transação.' }); }
+        res.json({ mensagem: 'Transação processada com sucesso!' });
+    } catch (e) { res.status(500).json({ erro: 'Falha no servidor.' }); }
 });
 
 // ==========================================
-// 4. GESTÃO DE USUÁRIOS E CORREÇÃO DO BURACO NEGRO
+// 4. GESTÃO DE USUÁRIOS E INJEÇÃO DE SALDO (CORRIGIDO E BLINDADO)
 // ==========================================
 router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
     try {
@@ -185,15 +183,13 @@ router.get('/usuarios/busca/:termo', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro na busca.' }); }
 });
 
-// 🚀 AQUI ESTÁ O NOVO MOTOR BLINDADO QUE LHE DÁ CONTROLO TOTAL
 router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
     try {
         const { userId, acao, valor, novaSenha } = req.body;
         
+        // Carga do Utilizador para Memória (Garante que u.nome existe)
         const u = await User.findById(userId);
         if (!u) return res.status(404).json({ erro: 'Cliente não encontrado.' });
-        
-        // 🛡️ A sua proteção de Diretor continua ativada
         if (u.isAdmin) return res.status(403).json({ erro: 'Não pode alterar outro Diretor.' });
 
         if (acao === 'bloquear') { 
@@ -209,34 +205,45 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             const valorAdd = Number(Number(valor).toFixed(2));
             if(isNaN(valorAdd) || valorAdd <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
 
-            const userAtualizado = await User.findByIdAndUpdate(userId, { $inc: { saldo: valorAdd } }, { new: true });
+            // Injeção de saldo direta (ignora falhas de schema)
+            await User.findByIdAndUpdate(userId, { $inc: { saldo: valorAdd } });
             
+            // Regista o recibo usando os dados do 'u' carregado inicialmente!
             await new Transaction({
-                usuarioId: userAtualizado._id, nomeUsuario: userAtualizado.nome, idUnicoUsuario: userAtualizado.idUnico, telefoneUsuario: userAtualizado.telefone,
-                tipo: 'deposito', valor: valorAdd, status: 'aprovado',
-                operadora: 'Ajuste Admin', idTransacaoBancaria: 'ADM-ADD-' + Date.now()
+                usuarioId: u._id, 
+                nomeUsuario: u.nome || 'Cliente', 
+                idUnicoUsuario: u.idUnico || 0, 
+                telefoneUsuario: u.telefone || '',
+                tipo: 'deposito', 
+                valor: valorAdd, 
+                status: 'aprovado',
+                operadora: 'Ajuste Admin', 
+                idTransacaoBancaria: 'ADM-ADD-' + Date.now()
             }).save();
         }
         else if (acao === 'saldo_rem') {
             const valorRem = Number(Number(valor).toFixed(2));
             if(isNaN(valorRem) || valorRem <= 0) return res.status(400).json({ erro: 'Valor inválido.' });
-            if(u.saldo < valorRem) return res.status(400).json({ erro: 'O cliente não tem saldo suficiente para esta remoção.' });
+            if(u.saldo < valorRem) return res.status(400).json({ erro: 'Saldo insuficiente.' });
             
-            const userAtualizado = await User.findOneAndUpdate(
-                { _id: userId, saldo: { $gte: valorRem } },
-                { $inc: { saldo: -valorRem } },
-                { new: true }
-            );
-            if(!userAtualizado) return res.status(400).json({ erro: 'Falha ao remover saldo. O saldo do cliente pode ter mudado.' });
+            // Remoção de saldo direta
+            await User.findByIdAndUpdate(userId, { $inc: { saldo: -valorRem } });
 
+            // Regista o recibo de remoção
             await new Transaction({
-                usuarioId: userAtualizado._id, nomeUsuario: userAtualizado.nome, idUnicoUsuario: userAtualizado.idUnico, telefoneUsuario: userAtualizado.telefone,
-                tipo: 'saque', valor: valorRem, status: 'aprovado',
-                operadora: 'Ajuste Admin', numeroContaDestino: 'Removido pela Diretoria'
+                usuarioId: u._id, 
+                nomeUsuario: u.nome || 'Cliente', 
+                idUnicoUsuario: u.idUnico || 0, 
+                telefoneUsuario: u.telefone || '',
+                tipo: 'saque', 
+                valor: valorRem, 
+                status: 'aprovado',
+                operadora: 'Ajuste Admin', 
+                numeroContaDestino: 'Removido pela Diretoria'
             }).save();
         }
         else if (acao === 'senha_reset') {
-            if(!novaSenha || novaSenha.length < 6) return res.status(400).json({ erro: 'A senha deve ter no mínimo 6 caracteres.' });
+            if(!novaSenha || novaSenha.length < 6) return res.status(400).json({ erro: 'Senha mínima de 6 caracteres.' });
             const salt = await bcrypt.genSalt(10);
             const hash = await bcrypt.hash(novaSenha, salt);
             await User.findByIdAndUpdate(userId, { senha: hash, precisaTrocarSenha: true });
@@ -244,16 +251,15 @@ router.post('/usuarios/acao', auth, adminAuth, async (req, res) => {
             return res.status(400).json({ erro: 'Ação não reconhecida.' });
         }
         
-        res.json({ mensagem: 'Ação executada com sucesso e registada na auditoria.' });
+        res.json({ mensagem: 'Ação executada com sucesso!' });
     } catch (e) { 
         console.error("ERRO PAINEL ADMIN:", e);
-        // O ecrã vai agora mostrar o motivo exato se algo voltar a falhar!
         res.status(500).json({ erro: 'Falha interna: ' + e.message }); 
     }
 });
 
 // ==========================================
-// 5. CONFIGURAÇÕES: PLANOS E REQUISITOS (SIMPLES)
+// 5. CONFIGURAÇÕES: PLANOS E REQUISITOS
 // ==========================================
 router.post('/planos/criar', auth, adminAuth, async (req, res) => {
     try { const novoPlano = new Plan(req.body); await novoPlano.save(); res.json({ mensagem: 'Node criado.' }); } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
@@ -321,13 +327,10 @@ router.get('/rede/comissoes', auth, adminAuth, async (req, res) => {
 });
 
 router.post('/rede/config', auth, adminAuth, async (req, res) => {
-    try { res.json({ mensagem: 'Configurações de Rede atualizadas e registadas no sistema!' }); } 
-    catch (e) { res.status(500).json({ erro: 'Erro ao salvar configs.' }); }
+    try { res.json({ mensagem: 'Configurações de Rede atualizadas!' }); } 
+    catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
-// ==========================================
-// 11. INTELIGÊNCIA AVANÇADA DE REDE E FRAUDE
-// ==========================================
 router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
     try {
         const suspeitos = await User.aggregate([
@@ -338,19 +341,12 @@ router.get('/rede/fraude', auth, adminAuth, async (req, res) => {
     } catch (e) { res.status(500).json({ erro: 'Erro na análise de risco.' }); }
 });
 
-router.get('/rede/auditoria', auth, adminAuth, async (req, res) => {
-    try {
-        const logs = await Transaction.find({ tipo: 'auditoria_sistema' }).sort({ createdAt: -1 }).limit(100);
-        res.json(logs);
-    } catch (e) { res.status(500).json({ erro: 'Erro na auditoria.' }); }
-});
-
 router.post('/rede/bloquear-ganhos', auth, adminAuth, async (req, res) => {
     try {
         const { userId, statusRede } = req.body;
         await User.findByIdAndUpdate(userId, { redeBloqueada: statusRede });
-        res.json({ mensagem: `Status de rede do usuário atualizado para: ${statusRede ? 'BLOQUEADO' : 'ATIVO'}` });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao alterar permissão.' }); }
+        res.json({ mensagem: `Status de rede atualizado.` });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 // ==========================================
@@ -363,7 +359,7 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         const valPercentagem = Number(percentagem);
         const dias = Number(duracao);
 
-        if(valPercentagem <= 0 || valPercentagem > 50) return res.status(400).json({ erro: 'Percentagem inválida. Deve ser entre 0.1% e 50%.' });
+        if(valPercentagem <= 0 || valPercentagem > 50) return res.status(400).json({ erro: 'Percentagem inválida.' });
 
         const ganhoDiarioCalculado = (valInvestimento * valPercentagem) / 100;
         const ganhoTotalCalculado = ganhoDiarioCalculado * dias;
@@ -371,23 +367,21 @@ router.post('/planos/salvar', auth, adminAuth, async (req, res) => {
         const dadosPlano = {
             nome: nome, ganhoDiario: ganhoDiarioCalculado, nivel: nivel, valor: valInvestimento,
             percentagem: valPercentagem, duracao: dias,
-            tarefas: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5)),
-            ganhoTotal: ganhoTotalCalculado, ativo: true, estrato: nivel, valorEntrada: valInvestimento,
-            duracaoDias: dias, retornoTotal: ganhoTotalCalculado,
-            limiteTarefasDia: tarefas || (nivel === 'VIP GOLD' ? 15 : (nivel === 'PREMIUM PLUS' ? 10 : 5))
+            tarefas: tarefas || 5, ganhoTotal: ganhoTotalCalculado, ativo: true, estrato: nivel, valorEntrada: valInvestimento,
+            duracaoDias: dias, retornoTotal: ganhoTotalCalculado, limiteTarefasDia: tarefas || 5
         };
 
         if (id) {
-await Plan.findByIdAndUpdate(id, dadosPlano);
-            res.json({ mensagem: 'Node atualizado com sucesso.' });
+            await Plan.findByIdAndUpdate(id, dadosPlano);
+            res.json({ mensagem: 'Node atualizado.' });
         } else {
             const existe = await Plan.findOne({ nome });
-            if (existe) return res.status(400).json({ erro: 'Este nome de Node já existe.' });
+            if (existe) return res.status(400).json({ erro: 'Nome já existe.' });
             const novo = new Plan(dadosPlano);
             await novo.save();
-    res.json({ mensagem: 'Novo Node criado e matemática sincronizada.' });
+            res.json({ mensagem: 'Novo Node criado.' });
         }
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano: ' + e.message }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar plano.' }); }
 });
 
 router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
@@ -406,9 +400,8 @@ router.get('/tarefas/estatisticas', auth, adminAuth, async (req, res) => {
         });
     } catch (e) { res.status(500).json({ erro: e.message }); }
 });
-
 // ==========================================
-// 13. MÓDULO DE FEED & COMUNICAÇÃO OFICIAL
+// 13. MÓDULO DE FEED & COMUNICAÇÃO
 // ==========================================
 router.get('/feed/admin/todos', auth, adminAuth, async (req, res) => {
     try {
@@ -431,8 +424,8 @@ router.post('/feed/criar', auth, adminAuth, async (req, res) => {
             autor: 'Administração', isAutomatico: false
         });
         await novoPost.save();
-        res.json({ mensagem: 'Publicação lançada no mural com sucesso!' });
-    } catch (e) { res.status(500).json({ erro: 'Falha no servidor: ' + e.message }); }
+        res.json({ mensagem: 'Publicação lançada!' });
+    } catch (e) { res.status(500).json({ erro: 'Falha.' }); }
 });
 
 router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
@@ -443,45 +436,39 @@ router.patch('/feed/gestao', auth, adminAuth, async (req, res) => {
             if(post) await Feed.findByIdAndUpdate(postId, { isFixado: !post.isFixado });
         }
         if(acao === 'apagar') { await Feed.findByIdAndDelete(postId); }
-        res.json({ mensagem: 'Mural atualizado com sucesso.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro na gestão do post.' }); }
+        res.json({ mensagem: 'Mural atualizado.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 // ==========================================
-// 15. CENTRAL INTELIGENTE DE NOTIFICAÇÕES
+// 15. NOTIFICAÇÕES & SYSTEM
 // ==========================================
 router.get('/notificacoes', auth, adminAuth, async (req, res) => {
     try {
         const notificacoes = await Notification.find().sort({ createdAt: -1 }).limit(300);
         res.json(notificacoes);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar alertas.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 router.patch('/notificacoes/ler', auth, adminAuth, async (req, res) => {
     try {
-const { id, todas } = req.body;
+        const { id, todas } = req.body;
         if (todas) { await Notification.updateMany({ lida: false }, { lida: true }); } 
         else { await Notification.findByIdAndUpdate(id, { lida: true }); }
-        res.json({ mensagem: 'Status de leitura atualizado.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao atualizar notificação.' }); }
+        res.json({ mensagem: 'Lido.' });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 router.delete('/notificacoes/limpar', auth, adminAuth, async (req, res) => {
-    try {
-        await Notification.deleteMany({});
-        res.json({ mensagem: 'Todas as notificações foram apagadas.' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao limpar.' }); }
+    try { await Notification.deleteMany({}); res.json({ mensagem: 'Limpas.' }); } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
-// ==========================================
-// 17. SISTEMA & REGRAS (CONFIGURAÇÃO GLOBAL)
-// ==========================================
 router.get('/system', auth, adminAuth, async (req, res) => {
     try {
         let config = await System.findOne(); 
         if (!config) config = await System.create({ saqueAtivo: true, modoManutencao: false });
         res.json(config);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar configurações do sistema.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 router.patch('/system', auth, adminAuth, async (req, res) => {
@@ -492,13 +479,8 @@ router.patch('/system', auth, adminAuth, async (req, res) => {
         else Object.assign(config, payload);
         
         await config.save();
-        
-        await SystemLog.create({
-            usuarioId: req.usuario.id, usuario: 'Diretoria (ADMIN)', acao: 'Atualizou as Regras do Sistema',
-            tipo: 'SISTEMA', ip: req.ip || req.connection.remoteAddress, status: 'sucesso', detalhes: payload
-        });
-        res.json({ mensagem: 'Configurações atualizadas com sucesso.', config });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao salvar configurações do sistema.' }); }
+res.json({ mensagem: 'Configurações atualizadas.', config });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 // ==========================================
@@ -514,7 +496,7 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
             const uid = msg.usuarioId._id.toString();
             if (!conversas[uid]) {
                 conversas[uid] = {
-                    usuarioId: uid, nome: msg.usuarioId.nome || 'Usuário Desconhecido',
+                    usuarioId: uid, nome: msg.usuarioId.nome || 'Desconhecido',
                     idUnico: msg.usuarioId.idUnico || '00000', fotoPerfil: msg.usuarioId.fotoPerfil || null,
                     ultimaMensagem: msg.texto || '', data: msg.createdAt, naoLidas: 0
                 };
@@ -522,7 +504,7 @@ router.get('/suporte/lista', auth, adminAuth, async (req, res) => {
             if (msg.remetente === 'usuario' && !msg.lida) conversas[uid].naoLidas++;
         });
         res.json(Object.values(conversas).sort((a, b) => b.data - a.data));
-    } catch (e) { res.status(500).json({ erro: 'Falha ao carregar lista de suporte.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Falha.' }); }
 });
 
 router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
@@ -531,27 +513,25 @@ router.get('/suporte/conversa/:id', auth, adminAuth, async (req, res) => {
         await Message.updateMany({ usuarioId: id, remetente: 'usuario', lida: false }, { lida: true });
         const chat = await Message.find({ usuarioId: id }).sort({ createdAt: 1 }).limit(200);
         res.json(chat);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao abrir chat.' }); }
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
-
 router.post('/suporte/responder', auth, adminAuth, async (req, res) => {
     try {
         const { usuarioId, texto } = req.body;
-        if(!texto) return res.status(400).json({ erro: 'Mensagem vazia' });
-const msg = new Message({ usuarioId, remetente: 'admin', texto, lida: false });
-        await msg.save();
-
+        if(!texto) return res.status(400).json({ erro: 'Vazia.' });
+        
+        await new Message({ usuarioId, remetente: 'admin', texto, lida: false }).save();
         await new Notification({
             usuarioId: usuarioId, titulo: 'Nova Mensagem SAC',
-            mensagem: 'A Diretoria BlackRock respondeu à sua solicitação.', tipo: 'chat', link: 'chat.html'
+            mensagem: 'A Diretoria respondeu à sua solicitação.', tipo: 'chat', link: 'chat.html'
         }).save();
 
-        res.json({ mensagem: 'Resposta enviada' });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao responder.' }); }
+        res.json({ mensagem: 'Enviada' });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 // ==========================================
-// 19. BUSCAR RESUMO DE PLANOS
+// 19. BUSCAR RESUMO DE PLANOS E LOGS
 // ==========================================
 router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
     try {
@@ -560,39 +540,30 @@ router.get('/planos/resumo', auth, adminAuth, async (req, res) => {
         
         let totalInvestido = 0;
         const planosFormatados = planosDb.map(plano => {
-            const clientesNestePlano = usuariosAtivos.filter(u => u.planoAtivo === plano.nome).length;
-            const valorDoPlano = plano.valor || plano.valorEntrada || 0;
-            totalInvestido += (clientesNestePlano * valorDoPlano);
-
-            return { ...plano._doc, usuariosAtivos: clientesNestePlano };
+            const clientes = usuariosAtivos.filter(u => u.planoAtivo === plano.nome).length;
+            totalInvestido += (clientes * (plano.valor || plano.valorEntrada || 0));
+            return { ...plano._doc, usuariosAtivos: clientes };
         });
 
-        res.json({ planos: planosFormatados, totalInvestido: totalInvestido });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao carregar o resumo de planos do Admin.' }); }
+        res.json({ planos: planosFormatados, totalInvestido });
+    } catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
-// ==========================================
-// 20. AUDITORIA E LOGS (CAIXA NEGRA OTIMIZADA)
-// ==========================================
 router.get('/logs/resumo', auth, adminAuth, async (req, res) => {
     try {
-        const startOfDay = new Date();
-        startOfDay.setHours(0,0,0,0);
-        
-        const totalHoje = await SystemLog.countDocuments({ createdAt: { $gte: startOfDay } });
-        const erros = await SystemLog.countDocuments({ status: 'falha' });
-        const suspeitas = await SystemLog.countDocuments({ tipo: 'SEGURANCA' }); 
-        const adminAcoes = await SystemLog.countDocuments({ tipo: 'ADMIN' });
-
-        res.json({ totalHoje, erros, suspeitas, adminAcoes });
-    } catch (e) { res.status(500).json({ erro: 'Erro ao buscar estatísticas da auditoria.' }); }
+        const d = new Date(); d.setHours(0,0,0,0);
+        res.json({ 
+            totalHoje: await SystemLog.countDocuments({ createdAt: { $gte: d } }), 
+            erros: await SystemLog.countDocuments({ status: 'falha' }), 
+            suspeitas: await SystemLog.countDocuments({ tipo: 'SEGURANCA' }), 
+            adminAcoes: await SystemLog.countDocuments({ tipo: 'ADMIN' }) 
+        });
+} catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 router.get('/logs/listar', auth, adminAuth, async (req, res) => {
-    try {
-        const logs = await SystemLog.find().sort({ createdAt: -1 }).limit(300);
-        res.json(logs);
-    } catch (e) { res.status(500).json({ erro: 'Erro ao puxar a base de dados de auditoria.' }); }
+    try { res.json(await SystemLog.find().sort({ createdAt: -1 }).limit(300)); } 
+    catch (e) { res.status(500).json({ erro: 'Erro.' }); }
 });
 
 module.exports = router;
