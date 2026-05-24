@@ -24,15 +24,28 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // ====================================================================
 app.use(async (req, res, next) => {
     try {
-        // 1. Deixa as rotas nativas do Painel Admin e os endpoints de autenticação/login abertos para triagem
-        if (req.path.startsWith('/api/admin') || req.path.includes('/login') || req.path.includes('/auth')) {
+        // 1. CORREDORES LIVRES: Rotas que nunca podem ser bloqueadas, 
+        // pois o frontend precisa delas para funcionar ou não envia token nelas.
+        const rotasLivres = [
+            '/api/admin', 
+            '/login', 
+            '/auth', 
+            '/api/sistema' // <- AQUI ESTÁ A CHAVE! O perfil carrega configs públicas daqui.
+        ];
+
+        if (rotasLivres.some(rota => req.path.includes(rota))) {
             return next();
         }
 
-        // 2. Consulta o estado atual do sistema na Base de Dados
+        // 2. Permite requisições prévias do navegador (CORS Preflight) que não trazem Token
+        if (req.method === 'OPTIONS') {
+            return next();
+        }
+
+        // 3. Consulta o estado atual do sistema na Base de Dados
         const config = await System.findOne();
         
-        // 3. Se a manutenção estiver ativa, inicia a triagem de segurança por privilégios
+        // 4. Se a manutenção estiver ativa, inicia a triagem de segurança
         if (config && config.modoManutencao === true) {
             const authHeader = req.headers['authorization'];
             
@@ -42,12 +55,12 @@ app.use(async (req, res, next) => {
                 try {
                     const decoded = jwt.verify(token, process.env.JWT_SECRET);
                     
-                    // Hipótese A: O utilizador está a usar o Token exclusivo do Painel Administrativo
+                    // Hipótese A: O utilizador está a usar o Token exclusivo do Painel Admin
                     if (decoded && decoded.isAdmin === true) {
                         return next();
                     }
 
-                    // Hipótese B: O Diretor está a usar a App normal dos clientes para inspecionar/testar
+                    // Hipótese B: O Diretor está a usar a App normal dos clientes para testar
                     const userId = decoded.id || decoded._id || decoded.userId;
                     if (userId) {
                         const utilizador = await User.findById(userId);
@@ -56,21 +69,21 @@ app.use(async (req, res, next) => {
                         }
                     }
                 } catch (errToken) {
-                    // Token inválido ou expirado segue para o bloqueio de segurança
+                    // Token inválido, segue para bloqueio
                 }
             }
 
-            // 🚫 Bloqueia o acesso de clientes comuns em todas as abas simultaneamente
+            // 🚫 Bloqueia o acesso de clientes comuns
             return res.status(503).json({ 
                 erro: 'A plataforma encontra-se em manutenção global para o lançamento oficial.' 
             });
         }
 
-        // Se o modo manutenção estiver desligado, o fluxo segue normalmente
+        // Se a manutenção estiver desligada, tudo funciona normalmente
         next();
     } catch (error) {
-        console.error("Falha no escudo de manutenção del servidor:", error);
-        next(); // Evita a queda do servidor em caso de falha de leitura
+        console.error("Falha no escudo de manutenção do servidor:", error);
+        next(); 
     }
 });
 
@@ -112,7 +125,6 @@ app.get('/', (req, res) => {
 async function executarLimpezaDePlanos() {
     try {
         const agora = new Date();
-        // Procura utilizadores que têm um plano ativo, mas a data de expiração já passou
         const resultado = await User.updateMany(
             { planoAtivo: { $ne: 'Nenhum' }, dataExpiracaoPlano: { $lt: agora } },
             { $set: { planoAtivo: 'Nenhum' } }
@@ -127,7 +139,6 @@ async function executarLimpezaDePlanos() {
 function iniciarMotorDeVarredura() {
     const agora = new Date();
     
-    // Calcula o tempo exato até à próxima meia-noite
     const proximaMeiaNoite = new Date(agora);
     proximaMeiaNoite.setHours(24, 0, 0, 0); 
     
@@ -135,11 +146,9 @@ function iniciarMotorDeVarredura() {
 
     console.log(`[SISTEMA] Varredor armado. Primeira execução em ${Math.round(tempoAteMeiaNoite / 1000 / 60)} minutes.`);
 
-    // Aguarda até à meia-noite para dar o primeiro disparo
     setTimeout(() => {
         executarLimpezaDePlanos();
         
-        // A partir desse momento, entra num loop exato a cada 24 horas (1 dia)
         const umDiaEmMs = 24 * 60 * 60 * 1000;
         setInterval(executarLimpezaDePlanos, umDiaEmMs);
         
@@ -156,7 +165,6 @@ mongoose.connect(process.env.MONGO_URI)
     app.listen(process.env.PORT || 3000, () => {
         console.log(`🚀 Servidor rodando na porta ${process.env.PORT || 3000}`);
         
-        // Ativa o motor silencioso logo após o servidor iniciar com sucesso
         iniciarMotorDeVarredura();
     });
 })
