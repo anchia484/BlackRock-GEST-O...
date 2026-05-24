@@ -20,19 +20,19 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 // ====================================================================
-// 🔒 ESCUDO GLOBAL DE MANUTENÇÃO (IMUNIDADE ADM / TRAVA PARA CLIENTES)
+// 🔒 ESCUDO GLOBAL DE MANUTENÇÃO (COM VIP PASS PARA DIRETORIA)
 // ====================================================================
 app.use(async (req, res, next) => {
     try {
-        // 1. Permite livre acesso às rotas nativas do Painel Administrativo
-        if (req.path.startsWith('/api/admin')) {
+        // 1. Deixa o Painel Admin e as portas de Login abertas para a Diretoria conseguir entrar!
+        if (req.path.startsWith('/api/admin') || req.path.includes('/login')) {
             return next();
         }
 
         // 2. Consulta o estado atual do sistema na Base de Dados
         const config = await System.findOne();
         
-        // 3. Se a manutenção estiver ativa, filtra as permissões de acesso
+        // 3. Se a manutenção estiver ativa, inicia a triagem de segurança
         if (config && config.modoManutencao === true) {
             const authHeader = req.headers['authorization'];
             
@@ -42,9 +42,19 @@ app.use(async (req, res, next) => {
                 try {
                     const decoded = jwt.verify(token, process.env.JWT_SECRET);
                     
-                    // 👑 Se o token comprovar privilégios da Diretoria, concede passe livre
+                    // Hipótese A: O utilizador está a usar o Token exclusivo do Painel Administrativo
                     if (decoded && decoded.isAdmin === true) {
                         return next();
+                    }
+
+                    // Hipótese B: O Diretor está a usar a App normal dos clientes para inspecionar/testar
+                    // O servidor valida o ID na base de dados para garantir imunidade absoluta
+                    const userId = decoded.id || decoded._id || decoded.userId;
+                    if (userId) {
+                        const utilizador = await User.findById(userId);
+                        if (utilizador && utilizador.isAdmin === true) {
+                            return next(); // 👑 VIP PASS: Autoriza o Diretor a navegar livremente!
+                        }
                     }
                 } catch (errToken) {
                     // Token inválido ou expirado segue para o bloqueio de segurança
