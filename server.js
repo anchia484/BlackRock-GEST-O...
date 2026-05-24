@@ -2,90 +2,18 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const jwt = require('jsonwebtoken'); // 🚀 Injetado para validação de privilégios em tempo real
 
-// Importação do Modelo de Usuário para o Varredor de Fundo
 const User = require('./User'); 
-const System = require('./System'); // 🚀 Injetado para leitura do interruptor de manutenção
+const System = require('./System'); 
 
 const app = express();
 app.use(cors());
 
 // ====================================================================
-// 🚀 PROTEÇÃO DE MEMÓRIA (OOM) E LIMITE DO MONGODB (Max 16MB por Doc)
-// Limite reduzido de '70mb' para '10mb'. Isso evita que uploads gigantes
-// derrubem o servidor Node.js ou quebrem o banco de dados.
+// 🚀 PROTEÇÃO DE MEMÓRIA (OOM) E LIMITE DO MONGODB (Max 10MB por Doc)
 // ====================================================================
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
-
-// ====================================================================
-// 🔒 ESCUDO GLOBAL DE MANUTENÇÃO (COM VIP PASS PARA DIRETORIA)
-// ====================================================================
-app.use(async (req, res, next) => {
-    try {
-        // 1. CORREDORES LIVRES: Rotas que nunca podem ser bloqueadas, 
-        // pois o frontend precisa delas para funcionar ou não envia token nelas.
-        const rotasLivres = [
-            '/api/admin', 
-            '/login', 
-            '/auth', 
-            '/api/sistema' // <- AQUI ESTÁ A CHAVE! O perfil carrega configs públicas daqui.
-        ];
-
-        if (rotasLivres.some(rota => req.path.includes(rota))) {
-            return next();
-        }
-
-        // 2. Permite requisições prévias do navegador (CORS Preflight) que não trazem Token
-        if (req.method === 'OPTIONS') {
-            return next();
-        }
-
-        // 3. Consulta o estado atual do sistema na Base de Dados
-        const config = await System.findOne();
-        
-        // 4. Se a manutenção estiver ativa, inicia a triagem de segurança
-        if (config && config.modoManutencao === true) {
-            const authHeader = req.headers['authorization'];
-            
-            if (authHeader && authHeader.startsWith('Bearer ')) {
-                const token = authHeader.split(' ')[1];
-                
-                try {
-                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-                    
-                    // Hipótese A: O utilizador está a usar o Token exclusivo do Painel Admin
-                    if (decoded && decoded.isAdmin === true) {
-                        return next();
-                    }
-
-                    // Hipótese B: O Diretor está a usar a App normal dos clientes para testar
-                    const userId = decoded.id || decoded._id || decoded.userId;
-                    if (userId) {
-                        const utilizador = await User.findById(userId);
-                        if (utilizador && utilizador.isAdmin === true) {
-                            return next(); // 👑 VIP PASS: Autoriza o Diretor a navegar livremente!
-                        }
-                    }
-                } catch (errToken) {
-                    // Token inválido, segue para bloqueio
-                }
-            }
-
-            // 🚫 Bloqueia o acesso de clientes comuns
-            return res.status(503).json({ 
-                erro: 'A plataforma encontra-se em manutenção global para o lançamento oficial.' 
-            });
-        }
-
-        // Se a manutenção estiver desligada, tudo funciona normalmente
-        next();
-    } catch (error) {
-        console.error("Falha no escudo de manutenção do servidor:", error);
-        next(); 
-    }
-});
 
 // Importando as rotas
 const authRoutes = require('./auth');
@@ -120,7 +48,7 @@ app.get('/', (req, res) => {
 });
 
 // ====================================================================
-// 🧹 MOTOR SILENCIOSO: VARREDOR DE PLANOS FANTASMAS (A CADA 24 HORAS À MEIA-NOITE)
+// 🧹 MOTOR SILENCIOSO: VARREDOR DE PLANOS FANTASMAS (24 HORAS)
 // ====================================================================
 async function executarLimpezaDePlanos() {
     try {
@@ -129,7 +57,6 @@ async function executarLimpezaDePlanos() {
             { planoAtivo: { $ne: 'Nenhum' }, dataExpiracaoPlano: { $lt: agora } },
             { $set: { planoAtivo: 'Nenhum' } }
         );
-        
         console.log(`[AUDITORIA BLACKROCK] Varredura Concluída: ${resultado.modifiedCount} planos expirados foram desativados.`);
     } catch (error) {
         console.error('[ERRO SISTEMA] Falha ao executar varredura de planos:', error);
@@ -138,20 +65,15 @@ async function executarLimpezaDePlanos() {
 
 function iniciarMotorDeVarredura() {
     const agora = new Date();
-    
     const proximaMeiaNoite = new Date(agora);
     proximaMeiaNoite.setHours(24, 0, 0, 0); 
     
     const tempoAteMeiaNoite = proximaMeiaNoite.getTime() - agora.getTime();
-
     console.log(`[SISTEMA] Varredor armado. Primeira execução em ${Math.round(tempoAteMeiaNoite / 1000 / 60)} minutes.`);
 
     setTimeout(() => {
         executarLimpezaDePlanos();
-        
-        const umDiaEmMs = 24 * 60 * 60 * 1000;
-        setInterval(executarLimpezaDePlanos, umDiaEmMs);
-        
+        setInterval(executarLimpezaDePlanos, 24 * 60 * 60 * 1000);
     }, tempoAteMeiaNoite);
 }
 
@@ -161,10 +83,8 @@ function iniciarMotorDeVarredura() {
 mongoose.connect(process.env.MONGO_URI)
 .then(() => {
     console.log('✅ Banco de dados MongoDB conectado!');
-    
     app.listen(process.env.PORT || 3000, () => {
         console.log(`🚀 Servidor rodando na porta ${process.env.PORT || 3000}`);
-        
         iniciarMotorDeVarredura();
     });
 })

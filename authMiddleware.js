@@ -1,31 +1,41 @@
 const jwt = require('jsonwebtoken');
+const System = require('./System'); 
 
 const authMiddleware = async (req, res, next) => {
     try {
-        // 1. Verifica se o cabeçalho de autorização foi enviado
+        // 1. Lê a autorização da requisição
         const authHeader = req.header('Authorization');
         if (!authHeader) {
             return res.status(401).json({ erro: 'Acesso negado. Token não fornecido.' });
         }
 
-        // 2. Extrai e limpa o Token
         const token = authHeader.replace('Bearer ', '').trim();
         if (!token) {
             return res.status(401).json({ erro: 'Acesso negado. Formato de token inválido.' });
         }
 
-        // 3. Verifica se o token é autêntico e se não expirou
+        // 2. Abre o Token para ver quem é
         const segredo = process.env.JWT_SECRET || 'sua_chave_secreta_aqui'; 
         const decodificado = jwt.verify(token, segredo);
-        
-        // 4. Injeta os dados do utilizador na requisição
         req.usuario = decodificado;
         
-        // 🚀 O Escudo de Manutenção foi removido daqui! 
-        // Como o server.js já possui o Escudo Global com Passe VIP para a Diretoria, 
-        // removemos este código antigo para evitar conflitos e deixar o sistema mais rápido.
+        // ==========================================================
+        // 🛡️ ESCUDO DE MANUTENÇÃO INTELIGENTE
+        // ==========================================================
+        // Se a pessoa NÃO FOR DIRETOR, o escudo verifica se a manutenção está ativa
+        if (decodificado.isAdmin !== true) {
+            const config = await System.findOne().select('modoManutencao');
+            
+            // Se o botão vermelho estiver ativado, bloqueia apenas os clientes
+            if (config && config.modoManutencao === true) {
+                return res.status(503).json({ 
+                    erro: 'Plataforma em Manutenção Programada', 
+                    isManutencao: true 
+                });
+            }
+        }
         
-        // 5. Tudo certo! Passou na segurança da conta. Pode entrar na Rota.
+        // 3. Se for Diretor, ou se não houver manutenção, avança livremente!
         next();
         
     } catch (err) {
