@@ -1,45 +1,31 @@
 const jwt = require('jsonwebtoken');
-const System = require('./System'); // Importação crucial para o Modo Manutenção
 
-// 🚀 Transformado em Async para consultar a Base de Dados em tempo real
 const authMiddleware = async (req, res, next) => {
     try {
-        // 1. Verifica se o token foi enviado
+        // 1. Verifica se o cabeçalho de autorização foi enviado
         const authHeader = req.header('Authorization');
         if (!authHeader) {
             return res.status(401).json({ erro: 'Acesso negado. Token não fornecido.' });
         }
 
+        // 2. Extrai e limpa o Token
         const token = authHeader.replace('Bearer ', '').trim();
         if (!token) {
             return res.status(401).json({ erro: 'Acesso negado. Formato de token inválido.' });
         }
 
-        // 2. Verifica se o token é autêntico e se não expirou
+        // 3. Verifica se o token é autêntico e se não expirou
         const segredo = process.env.JWT_SECRET || 'sua_chave_secreta_aqui'; 
         const decodificado = jwt.verify(token, segredo);
         
+        // 4. Injeta os dados do utilizador na requisição
         req.usuario = decodificado;
         
-        // ==========================================================
-        // 🛡️ O ESCUDO IMPENETRÁVEL DE MANUTENÇÃO GLOBAL
-        // ==========================================================
-        // Se a pessoa NÃO for administrador, vamos verificar a trava!
-        if (!decodificado.isAdmin) {
-            // Consulta extremamente leve (puxa apenas a flag modoManutencao)
-            const config = await System.findOne().select('modoManutencao');
-            
-            // Se o botão vermelho foi ativado no painel da Diretoria...
-            if (config && config.modoManutencao === true) {
-                // Aborta a requisição Imediatamente com código 503 (Serviço Indisponível)
-                return res.status(503).json({ 
-                    erro: 'Plataforma em Manutenção Programada', 
-                    isManutencao: true 
-                });
-            }
-        }
+        // 🚀 O Escudo de Manutenção foi removido daqui! 
+        // Como o server.js já possui o Escudo Global com Passe VIP para a Diretoria, 
+        // removemos este código antigo para evitar conflitos e deixar o sistema mais rápido.
         
-        // 3. Tudo certo! Passou no escudo. Pode entrar na Rota.
+        // 5. Tudo certo! Passou na segurança da conta. Pode entrar na Rota.
         next();
         
     } catch (err) {
