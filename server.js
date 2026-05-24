@@ -2,9 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const jwt = require('jsonwebtoken'); // 🚀 Injetado para validação de privilégios em tempo real
 
 // Importação do Modelo de Usuário para o Varredor de Fundo
 const User = require('./User'); 
+const System = require('./System'); // 🚀 Injetado para leitura do interruptor de manutenção
 
 const app = express();
 app.use(cors());
@@ -16,6 +18,52 @@ app.use(cors());
 // ====================================================================
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// ====================================================================
+// 🔒 ESCUDO GLOBAL DE MANUTENÇÃO (IMUNIDADE ADM / TRAVA PARA CLIENTES)
+// ====================================================================
+app.use(async (req, res, next) => {
+    try {
+        // 1. Permite livre acesso às rotas nativas do Painel Administrativo
+        if (req.path.startsWith('/api/admin')) {
+            return next();
+        }
+
+        // 2. Consulta o estado atual do sistema na Base de Dados
+        const config = await System.findOne();
+        
+        // 3. Se a manutenção estiver ativa, filtra as permissões de acesso
+        if (config && config.modoManutencao === true) {
+            const authHeader = req.headers['authorization'];
+            
+            if (authHeader && authHeader.startsWith('Bearer ')) {
+                const token = authHeader.split(' ')[1];
+                
+                try {
+                    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+                    
+                    // 👑 Se o token comprovar privilégios da Diretoria, concede passe livre
+                    if (decoded && decoded.isAdmin === true) {
+                        return next();
+                    }
+                } catch (errToken) {
+                    // Token inválido ou expirado segue para o bloqueio de segurança
+                }
+            }
+
+            // 🚫 Bloqueia o acesso de clientes comuns em todas as abas simultaneamente
+            return res.status(503).json({ 
+                erro: 'A plataforma encontra-se em manutenção global para o lançamento oficial.' 
+            });
+        }
+
+        // Se o modo manutenção estiver desligado, o fluxo segue normalmente
+        next();
+    } catch (error) {
+        console.error("Falha no escudo de manutenção do servidor:", error);
+        next(); // Evita a queda do servidor em caso de falha de leitura
+    }
+});
 
 // Importando as rotas
 const authRoutes = require('./auth');
@@ -76,7 +124,7 @@ function iniciarMotorDeVarredura() {
     
     const tempoAteMeiaNoite = proximaMeiaNoite.getTime() - agora.getTime();
 
-    console.log(`[SISTEMA] Varredor armado. Primeira execução em ${Math.round(tempoAteMeiaNoite / 1000 / 60)} minutos.`);
+    console.log(`[SISTEMA] Varredor armado. Primeira execução em ${Math.round(tempoAteMeiaNoite / 1000 / 60)} minutes.`);
 
     // Aguarda até à meia-noite para dar o primeiro disparo
     setTimeout(() => {
