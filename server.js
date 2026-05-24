@@ -24,15 +24,15 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 // ====================================================================
 app.use(async (req, res, next) => {
     try {
-        // 1. Deixa o Painel Admin e as portas de Login abertas para a Diretoria conseguir entrar!
-        if (req.path.startsWith('/api/admin') || req.path.includes('/login')) {
+        // 1. Deixa as rotas nativas do Painel Admin e os endpoints de autenticação/login abertos para triagem
+        if (req.path.startsWith('/api/admin') || req.path.includes('/login') || req.path.includes('/auth')) {
             return next();
         }
 
         // 2. Consulta o estado atual do sistema na Base de Dados
         const config = await System.findOne();
         
-        // 3. Se a manutenção estiver ativa, inicia a triagem de segurança
+        // 3. Se a manutenção estiver ativa, inicia a triagem de segurança por privilégios
         if (config && config.modoManutencao === true) {
             const authHeader = req.headers['authorization'];
             
@@ -48,7 +48,6 @@ app.use(async (req, res, next) => {
                     }
 
                     // Hipótese B: O Diretor está a usar a App normal dos clientes para inspecionar/testar
-                    // O servidor valida o ID na base de dados para garantir imunidade absoluta
                     const userId = decoded.id || decoded._id || decoded.userId;
                     if (userId) {
                         const utilizador = await User.findById(userId);
@@ -70,7 +69,7 @@ app.use(async (req, res, next) => {
         // Se o modo manutenção estiver desligado, o fluxo segue normalmente
         next();
     } catch (error) {
-        console.error("Falha no escudo de manutenção do servidor:", error);
+        console.error("Falha no escudo de manutenção del servidor:", error);
         next(); // Evita a queda do servidor em caso de falha de leitura
     }
 });
