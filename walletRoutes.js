@@ -123,15 +123,19 @@ router.post('/saque', auth, async (req, res) => {
         }
 
         if (config.saqueAbre && config.saqueFecha) {
-            const agora = new Date();
-            const horaAtual = agora.getHours() + (agora.getMinutes() / 60);
+            // 🚀 CORREÇÃO CIRÚRGICA: Forçar fuso horário de Moçambique (Africa/Maputo)
+            // Extraímos a data e hora locais do fuso de Maputo como string e convertemos novamente para data.
+            const dataStrMaputo = new Date().toLocaleString("en-US", { timeZone: "Africa/Maputo" });
+            const agoraMaputo = new Date(dataStrMaputo);
+            
+            const horaAtual = agoraMaputo.getHours() + (agoraMaputo.getMinutes() / 60);
             
             const [hAbre, mAbre] = config.saqueAbre.split(':').map(Number);
             const [hFecha, mFecha] = config.saqueFecha.split(':').map(Number);
             
             const tempoAbre = hAbre + ((mAbre || 0) / 60);
             const tempoFecha = hFecha + ((mFecha || 0) / 60);
-            const diaSemana = agora.getDay(); 
+            const diaSemana = agoraMaputo.getDay(); 
 
             if (diaSemana === 0 || diaSemana === 6 || horaAtual < tempoAbre || horaAtual > tempoFecha) {
                 return res.status(403).json({ erro: 'Operação rejeitada: Levantamentos disponíveis apenas em dias úteis, dentro do horário de funcionamento.' });
